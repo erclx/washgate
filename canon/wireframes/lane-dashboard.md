@@ -83,6 +83,7 @@ The Replay build talks to no backend. It plays a recorded run and shows only wha
   - fleet: `Fleet car, billed to <company>`
   - duplicate read: `Same car read again, counted once`
   - cap reached: `Premium cap of 8 reached, offer a single wash`
+  - prepaid wash: `Paid single wash`
   - unknown plate: `No subscription, single wash`
   - unknown plate on a site copy past its offline limit: `Not in the site's copy, which is out of date`
   - low confidence: `Read below the <cutoff> cutoff`
