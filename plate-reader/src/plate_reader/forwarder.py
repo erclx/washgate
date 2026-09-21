@@ -1,19 +1,20 @@
+import base64
 import logging
 import time
 import urllib.request
 from typing import Protocol
 
-from plate_reader.models import PlateRead
+from plate_reader.models import ForwardedRead, PlateRead
 
 logger = logging.getLogger(__name__)
 
 
 class Forwarder(Protocol):
-    def forward(self, plate_read: PlateRead) -> None: ...
+    def forward(self, plate_read: PlateRead, image_bytes: bytes) -> None: ...
 
 
 class NoopForwarder:
-    def forward(self, plate_read: PlateRead) -> None:
+    def forward(self, plate_read: PlateRead, image_bytes: bytes) -> None:
         logger.info('site agent url not set, read not forwarded')
 
 
@@ -30,10 +31,14 @@ class HttpForwarder:
         self.attempts = attempts
         self.backoff_seconds = backoff_seconds
 
-    def forward(self, plate_read: PlateRead) -> None:
+    def forward(self, plate_read: PlateRead, image_bytes: bytes) -> None:
+        body = ForwardedRead(
+            **plate_read.model_dump(),
+            photo=base64.b64encode(image_bytes).decode(),
+        )
         request = urllib.request.Request(
             self.url,
-            data=plate_read.model_dump_json().encode(),
+            data=body.model_dump_json().encode(),
             headers={'Content-Type': 'application/json'},
             method='POST',
         )

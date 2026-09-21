@@ -51,5 +51,12 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  plate-reader:
+    build: ./plate-reader
+    environment:
+      SITE_AGENT_URL: http://site-agent:8081/reads
+    ports:
+      - '127.0.0.1:${PLATE_READER_PORT:-8000}:8000'
+
 volumes:
   mariadb-data:

@@ -53,7 +53,14 @@ class TestPlateEndpoint:
 
         client.post('/read', content=IMAGE, headers=JPEG)
 
-        assert forwarder.forwarded == [build_plate_read()]
+        assert forwarder.forwarded == [(build_plate_read(), IMAGE)]
+
+    def test_answer_carries_no_photo_field(self) -> None:
+        client = build_client(FakeReader(build_plate_read()))
+
+        response = client.post('/read', content=IMAGE, headers=JPEG)
+
+        assert 'photo' not in response.json()
 
     def test_returns_404_when_no_plate_is_found(self) -> None:
         forwarder = RecordingForwarder()
