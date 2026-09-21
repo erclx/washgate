@@ -1,0 +1,23 @@
+{
+  "id": "evt_test_subscription_deleted_0001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1792654200,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": { "id": null, "idempotency_key": null },
+  "type": "customer.subscription.deleted",
+  "data": {
+    "object": {
+      "id": "sub_test_0001",
+      "object": "subscription",
+      "canceled_at": 1792654200,
+      "currency": "sek",
+      "customer": "cus_test_0001",
+      "ended_at": 1792654200,
+      "livemode": false,
+      "metadata": { "customer_id": "customer-anna", "plate": "ABC123" },
+      "status": "canceled"
+    }
+  }
+}

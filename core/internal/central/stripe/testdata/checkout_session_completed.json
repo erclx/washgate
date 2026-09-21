@@ -1,0 +1,21 @@
+{
+  "id": "evt_test_checkout_completed_0001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1789975800,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": { "id": null, "idempotency_key": null },
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "id": "cs_test_0001",
+      "object": "checkout.session",
+      "client_reference_id": "customer-anna",
+      "mode": "subscription",
+      "payment_status": "paid",
+      "status": "complete",
+      "subscription": "sub_test_0001"
+    }
+  }
+}

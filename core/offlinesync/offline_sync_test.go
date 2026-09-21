@@ -82,7 +82,7 @@ func newSystem(t *testing.T) *system {
 		}
 	}
 
-	link := &link{central: central.NewRouter(centralStore)}
+	link := &link{central: central.NewRouter(centralStore, nil)}
 	server := httptest.NewServer(link)
 	t.Cleanup(server.Close)
 

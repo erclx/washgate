@@ -17,7 +17,7 @@ Only the camera and the customers are simulated. Every service, database, and ne
 
 ## Status
 
-Scaffolded, not yet working end to end. Each component builds and passes its checks. A site agent decides entry from its local copy, pushes each wash to central through an outbox, and pulls entitlement changes back, so it keeps deciding with its link cut and central stores each wash once when the link returns. The invoicing service serves a month of fleet washes as CSV at `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` grouping by leasing company. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
+Scaffolded, not yet working end to end. Each component builds and passes its checks. A site agent decides entry from its local copy, pushes each wash to central through an outbox, and pulls entitlement changes back, so it keeps deciding with its link cut and central stores each wash once when the link returns. Central also opens a Stripe test-mode Checkout for Premium and applies each Stripe event once, which stays off until a test key is set. The invoicing service serves a month of fleet washes as CSV at `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` grouping by leasing company. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
 
 ## Setup
 
@@ -40,6 +40,8 @@ docker compose up --build
 curl localhost:8080/health
 curl localhost:8081/health
 ```
+
+To take test payments, copy `.env.example` to `.env`, set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` to your Stripe test values, and add the event forwarder with `docker compose --profile stripe up --build`.
 
 Every component folder takes the same commands:
 

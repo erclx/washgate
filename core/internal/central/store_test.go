@@ -2,6 +2,7 @@ package central
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"os"
 	"slices"
@@ -514,5 +515,390 @@ func TestDownMigrationDropsEveryTable(t *testing.T) {
 	}
 	if tables != 0 {
 		t.Fatalf("tables left = %d, want 0", tables)
+	}
+}
+
+const (
+	testCustomerID           = "customer-anna"
+	testStripeSubscriptionID = "sub_test_0001"
+)
+
+var testPeriodEnd = time.Date(2026, 10, 21, 7, 30, 0, 0, time.UTC)
+
+type storedSubscription struct {
+	Plate     string
+	Plan      string
+	Status    string
+	PeriodEnd time.Time
+}
+
+func addCustomer(t *testing.T, database *testdb.Database, id string) {
+	t.Helper()
+	if _, err := database.SQL.ExecContext(t.Context(),
+		"INSERT INTO customers (id, email, created_at) VALUES (?, ?, UTC_TIMESTAMP(6))", id, id+"@example.test",
+	); err != nil {
+		t.Fatalf("add customer: %v", err)
+	}
+}
+
+func addPrice(t *testing.T, database *testdb.Database, code string, amountOre int64, validFrom time.Time) {
+	t.Helper()
+	if _, err := database.SQL.ExecContext(t.Context(),
+		"INSERT INTO prices (code, amount_ore, valid_from) VALUES (?, ?, ?)", code, amountOre, validFrom,
+	); err != nil {
+		t.Fatalf("add price: %v", err)
+	}
+}
+
+func paidInvoice(eventID string, periodEnd time.Time) SubscriptionEvent {
+	return SubscriptionEvent{
+		EventID:              eventID,
+		EventType:            "invoice.paid",
+		Action:               SubscriptionPaid,
+		StripeSubscriptionID: testStripeSubscriptionID,
+		CustomerID:           testCustomerID,
+		Plate:                "ABC123",
+		PeriodEnd:            periodEnd,
+	}
+}
+
+func deletedSubscription(eventID, stripeSubscriptionID string) SubscriptionEvent {
+	return SubscriptionEvent{
+		EventID:              eventID,
+		EventType:            "customer.subscription.deleted",
+		Action:               SubscriptionEnded,
+		StripeSubscriptionID: stripeSubscriptionID,
+	}
+}
+
+func applyEvent(t *testing.T, store *Store, event SubscriptionEvent) EventOutcome {
+	t.Helper()
+	outcome, err := store.ApplySubscriptionEvent(t.Context(), event)
+	if err != nil {
+		t.Fatalf("apply event %s: %v", event.EventID, err)
+	}
+	return outcome
+}
+
+func readSubscriptions(t *testing.T, database *testdb.Database) []storedSubscription {
+	t.Helper()
+	rows, err := database.SQL.QueryContext(t.Context(),
+		"SELECT plate, plan, status, current_period_end FROM subscriptions ORDER BY id")
+	if err != nil {
+		t.Fatalf("read subscriptions: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	subscriptions := []storedSubscription{}
+	for rows.Next() {
+		var subscription storedSubscription
+		var periodEnd sql.NullTime
+		if err := rows.Scan(&subscription.Plate, &subscription.Plan, &subscription.Status, &periodEnd); err != nil {
+			t.Fatalf("scan subscription: %v", err)
+		}
+		subscription.PeriodEnd = periodEnd.Time
+		subscriptions = append(subscriptions, subscription)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate subscriptions: %v", err)
+	}
+	return subscriptions
+}
+
+func countStripeEvents(t *testing.T, database *testdb.Database) int {
+	t.Helper()
+	var count int
+	if err := database.SQL.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM stripe_events").Scan(&count); err != nil {
+		t.Fatalf("count stripe events: %v", err)
+	}
+	return count
+}
+
+func TestApplySubscriptionEvent(t *testing.T) {
+	t.Run("the first paid invoice starts an active Premium subscription and appends one change", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+
+		outcome := applyEvent(t, store, paidInvoice("evt_1", testPeriodEnd))
+
+		if outcome != EventApplied {
+			t.Fatalf("outcome = %s, want %s", outcome, EventApplied)
+		}
+		want := []storedSubscription{{Plate: "ABC123", Plan: "premium", Status: "active", PeriodEnd: testPeriodEnd}}
+		if got := readSubscriptions(t, database); !slices.Equal(got, want) {
+			t.Fatalf("subscriptions = %+v, want %+v", got, want)
+		}
+		changes := readChanges(t, store, 0, 10)
+		if len(changes) != 1 || changes[0].Plate != "ABC123" || changes[0].Plan != PlanPremium {
+			t.Fatalf("changes = %+v, want one premium change for ABC123", changes)
+		}
+	})
+
+	t.Run("the same event id again changes nothing and reports a duplicate", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		applyEvent(t, store, paidInvoice("evt_1", testPeriodEnd))
+
+		outcome := applyEvent(t, store, paidInvoice("evt_1", testPeriodEnd.AddDate(0, 1, 0)))
+
+		if outcome != EventDuplicate {
+			t.Fatalf("outcome = %s, want %s", outcome, EventDuplicate)
+		}
+		if got := readSubscriptions(t, database); len(got) != 1 || !got[0].PeriodEnd.Equal(testPeriodEnd) {
+			t.Fatalf("subscriptions = %+v, want one ending %s", got, testPeriodEnd)
+		}
+		if changes := readChanges(t, store, 0, 10); len(changes) != 1 {
+			t.Fatalf("changes = %d, want 1", len(changes))
+		}
+	})
+
+	t.Run("a later paid invoice extends the period once and appends an unchanged plan", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		applyEvent(t, store, paidInvoice("evt_1", testPeriodEnd))
+		nextPeriodEnd := testPeriodEnd.AddDate(0, 1, 0)
+
+		outcome := applyEvent(t, store, paidInvoice("evt_2", nextPeriodEnd))
+
+		if outcome != EventApplied {
+			t.Fatalf("outcome = %s, want %s", outcome, EventApplied)
+		}
+		want := []storedSubscription{{Plate: "ABC123", Plan: "premium", Status: "active", PeriodEnd: nextPeriodEnd}}
+		if got := readSubscriptions(t, database); !slices.Equal(got, want) {
+			t.Fatalf("subscriptions = %+v, want %+v", got, want)
+		}
+		changes := readChanges(t, store, 0, 10)
+		if len(changes) != 2 || changes[1].Plan != PlanPremium {
+			t.Fatalf("changes = %+v, want a second premium change", changes)
+		}
+	})
+
+	t.Run("an older period never shortens the subscription", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		applyEvent(t, store, paidInvoice("evt_2", testPeriodEnd.AddDate(0, 1, 0)))
+
+		applyEvent(t, store, paidInvoice("evt_1", testPeriodEnd))
+
+		if got := readSubscriptions(t, database); len(got) != 1 || !got[0].PeriodEnd.Equal(testPeriodEnd.AddDate(0, 1, 0)) {
+			t.Fatalf("subscriptions = %+v, want one ending %s", got, testPeriodEnd.AddDate(0, 1, 0))
+		}
+	})
+
+	t.Run("a paid invoice replaces the plate's other active subscription", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		putEntitlement(t, store, Entitlement{Plate: "ABC123", Plan: PlanPremium, CustomerID: testCustomerID})
+
+		applyEvent(t, store, paidInvoice("evt_1", testPeriodEnd))
+
+		var active int
+		if err := database.SQL.QueryRowContext(t.Context(),
+			"SELECT COUNT(*) FROM subscriptions WHERE plate = 'ABC123' AND status = 'active'").Scan(&active); err != nil {
+			t.Fatalf("count active subscriptions: %v", err)
+		}
+		if active != 1 {
+			t.Fatalf("active subscriptions = %d, want 1", active)
+		}
+	})
+
+	t.Run("a deletion cancels the subscription and appends a revoke with no plan", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		applyEvent(t, store, paidInvoice("evt_1", testPeriodEnd))
+
+		outcome := applyEvent(t, store, deletedSubscription("evt_2", testStripeSubscriptionID))
+
+		if outcome != EventApplied {
+			t.Fatalf("outcome = %s, want %s", outcome, EventApplied)
+		}
+		if got := readSubscriptions(t, database); len(got) != 1 || got[0].Status != "canceled" {
+			t.Fatalf("subscriptions = %+v, want one canceled", got)
+		}
+		changes := readChanges(t, store, 0, 10)
+		if len(changes) != 2 || changes[1].Plate != "ABC123" || changes[1].Plan != PlanNone {
+			t.Fatalf("changes = %+v, want a revoke for ABC123", changes)
+		}
+	})
+
+	t.Run("a deletion for an unknown subscription changes nothing but its event id", func(t *testing.T) {
+		store, database := newTestStore(t)
+
+		outcome := applyEvent(t, store, deletedSubscription("evt_1", "sub_unknown"))
+
+		if outcome != EventIgnored {
+			t.Fatalf("outcome = %s, want %s", outcome, EventIgnored)
+		}
+		if changes := readChanges(t, store, 0, 10); len(changes) != 0 {
+			t.Fatalf("changes = %+v, want none", changes)
+		}
+		if got := countStripeEvents(t, database); got != 1 {
+			t.Fatalf("stripe events = %d, want 1", got)
+		}
+	})
+
+	t.Run("a paid invoice after the deletion does not bring the subscription back", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		applyEvent(t, store, paidInvoice("evt_1", testPeriodEnd))
+		applyEvent(t, store, deletedSubscription("evt_2", testStripeSubscriptionID))
+
+		outcome := applyEvent(t, store, paidInvoice("evt_3", testPeriodEnd.AddDate(0, 1, 0)))
+
+		if outcome != EventIgnored {
+			t.Fatalf("outcome = %s, want %s", outcome, EventIgnored)
+		}
+		if got := readSubscriptions(t, database); len(got) != 1 || got[0].Status != "canceled" {
+			t.Fatalf("subscriptions = %+v, want one canceled", got)
+		}
+	})
+
+	t.Run("a paid invoice for an unknown customer is rejected and leaves no event id", func(t *testing.T) {
+		store, database := newTestStore(t)
+
+		_, err := store.ApplySubscriptionEvent(t.Context(), paidInvoice("evt_1", testPeriodEnd))
+
+		if !errors.Is(err, ErrUnknownCustomer) {
+			t.Fatalf("error = %v, want ErrUnknownCustomer", err)
+		}
+		if got := countStripeEvents(t, database); got != 0 {
+			t.Fatalf("stripe events = %d, want 0", got)
+		}
+	})
+
+	t.Run("a paid invoice for a plate no site would look up is rejected", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		event := paidInvoice("evt_1", testPeriodEnd)
+		event.Plate = "abc 123"
+
+		_, err := store.ApplySubscriptionEvent(t.Context(), event)
+
+		if !errors.Is(err, ErrInvalidEntitlement) {
+			t.Fatalf("error = %v, want ErrInvalidEntitlement", err)
+		}
+	})
+
+	t.Run("an ignored type stores only its event id", func(t *testing.T) {
+		store, database := newTestStore(t)
+
+		outcome := applyEvent(t, store, SubscriptionEvent{EventID: "evt_1", EventType: "checkout.session.completed", Action: SubscriptionUnchanged})
+
+		if outcome != EventIgnored {
+			t.Fatalf("outcome = %s, want %s", outcome, EventIgnored)
+		}
+		if got := countStripeEvents(t, database); got != 1 {
+			t.Fatalf("stripe events = %d, want 1", got)
+		}
+		if got := readSubscriptions(t, database); len(got) != 0 {
+			t.Fatalf("subscriptions = %+v, want none", got)
+		}
+	})
+}
+
+func TestPremiumPrice(t *testing.T) {
+	t.Run("reads the latest premium price valid at the time", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addPrice(t, database, "premium", 24900, testAdmittedAt.AddDate(-1, 0, 0))
+		addPrice(t, database, "premium", 29900, testAdmittedAt.AddDate(0, -1, 0))
+		addPrice(t, database, "premium", 34900, testAdmittedAt.AddDate(0, 1, 0))
+		addPrice(t, database, "single", 14900, testAdmittedAt.AddDate(0, 0, -1))
+
+		amount, err := store.PremiumPrice(t.Context(), testAdmittedAt)
+
+		if err != nil {
+			t.Fatalf("premium price: %v", err)
+		}
+		if amount != 29900 {
+			t.Fatalf("amount = %d, want 29900", amount)
+		}
+	})
+
+	t.Run("reports no price when none is valid yet", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addPrice(t, database, "premium", 29900, testAdmittedAt.AddDate(0, 1, 0))
+
+		_, err := store.PremiumPrice(t.Context(), testAdmittedAt)
+
+		if !errors.Is(err, ErrNoPremiumPrice) {
+			t.Fatalf("error = %v, want ErrNoPremiumPrice", err)
+		}
+	})
+}
+
+func TestIsPlateHeldByAnother(t *testing.T) {
+	t.Run("a plate another customer holds actively is held", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, "customer-bo")
+		putEntitlement(t, store, Entitlement{Plate: "ABC123", Plan: PlanPremium, CustomerID: "customer-bo"})
+
+		held, err := store.IsPlateHeldByAnother(t.Context(), "ABC123", testCustomerID)
+
+		if err != nil || !held {
+			t.Fatalf("held = %t, error = %v, want true", held, err)
+		}
+	})
+
+	t.Run("a plate another customer registered with no subscription is held", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, "customer-bo")
+		if _, err := database.SQL.ExecContext(t.Context(),
+			"INSERT INTO vehicles (plate, customer_id) VALUES ('ABC123', 'customer-bo')"); err != nil {
+			t.Fatalf("register vehicle: %v", err)
+		}
+
+		held, err := store.IsPlateHeldByAnother(t.Context(), "ABC123", testCustomerID)
+
+		if err != nil || !held {
+			t.Fatalf("held = %t, error = %v, want true", held, err)
+		}
+	})
+
+	t.Run("an unregistered plate is not held", func(t *testing.T) {
+		store, _ := newTestStore(t)
+
+		held, err := store.IsPlateHeldByAnother(t.Context(), "ABC123", testCustomerID)
+
+		if err != nil || held {
+			t.Fatalf("held = %t, error = %v, want false", held, err)
+		}
+	})
+
+	t.Run("a plate the same customer holds is not held by another", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		putEntitlement(t, store, Entitlement{Plate: "ABC123", Plan: PlanPremium, CustomerID: testCustomerID})
+
+		held, err := store.IsPlateHeldByAnother(t.Context(), "ABC123", testCustomerID)
+
+		if err != nil || held {
+			t.Fatalf("held = %t, error = %v, want false", held, err)
+		}
+	})
+
+	t.Run("a fleet car is held by its company", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCompany(t, database, testCompanyID, testCompanyName)
+		putEntitlement(t, store, Entitlement{Plate: "FLT001", Plan: PlanFleet, CompanyID: testCompanyID})
+
+		held, err := store.IsPlateHeldByAnother(t.Context(), "FLT001", testCustomerID)
+
+		if err != nil || !held {
+			t.Fatalf("held = %t, error = %v, want true", held, err)
+		}
+	})
+}
+
+func TestCustomerExists(t *testing.T) {
+	store, database := newTestStore(t)
+	addCustomer(t, database, testCustomerID)
+
+	known, errKnown := store.CustomerExists(t.Context(), testCustomerID)
+	unknown, errUnknown := store.CustomerExists(t.Context(), "customer-nobody")
+
+	if errKnown != nil || errUnknown != nil {
+		t.Fatalf("errors = %v, %v, want none", errKnown, errUnknown)
+	}
+	if !known || unknown {
+		t.Fatalf("exists = %t for the customer and %t for nobody, want true and false", known, unknown)
 	}
 }

@@ -33,7 +33,43 @@ var (
 	ErrUnknownCompany = errors.New("unknown company")
 	// ErrInvalidEntitlement reports an entitlement whose plan and owner do not pair, which no site could apply.
 	ErrInvalidEntitlement = errors.New("invalid entitlement")
+	// ErrUnknownCustomer reports a subscription naming a customer central does not know.
+	ErrUnknownCustomer = errors.New("unknown customer")
+	// ErrNoPremiumPrice reports that no Premium price is valid yet.
+	ErrNoPremiumPrice = errors.New("no premium price")
 )
+
+// SubscriptionAction is what a payment event does to a subscription.
+type SubscriptionAction int
+
+// The actions a payment event can carry.
+const (
+	SubscriptionUnchanged SubscriptionAction = iota
+	SubscriptionPaid
+	SubscriptionEnded
+)
+
+// EventOutcome is what applying a payment event did.
+type EventOutcome string
+
+// The outcomes of applying a payment event.
+const (
+	EventApplied   EventOutcome = "applied"
+	EventDuplicate EventOutcome = "duplicate"
+	EventIgnored   EventOutcome = "ignored"
+)
+
+// SubscriptionEvent is a payment provider's event as central applies it. A paid event starts or extends
+// the subscription to PeriodEnd, and an ended one cancels it.
+type SubscriptionEvent struct {
+	EventID              string
+	EventType            string
+	Action               SubscriptionAction
+	StripeSubscriptionID string
+	CustomerID           string
+	Plate                string
+	PeriodEnd            time.Time
+}
 
 // Plan is what entitles a plate to wash. PlanNone is a revoked or absent entitlement.
 type Plan string
@@ -234,9 +270,8 @@ func (s *Store) PutEntitlement(ctx context.Context, entitlement Entitlement) err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var cursor int
-	if err := tx.QueryRowContext(ctx, "SELECT id FROM entitlement_cursor WHERE id = 1 FOR UPDATE").Scan(&cursor); err != nil {
-		return fmt.Errorf("lock entitlement cursor: %w", err)
+	if err := lockEntitlementCursor(ctx, tx); err != nil {
+		return err
 	}
 
 	var companyName sql.NullString
@@ -274,15 +309,211 @@ func (s *Store) PutEntitlement(ctx context.Context, entitlement Entitlement) err
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO entitlement_changes (plate, plan, company_id, company_name, changed_at)
-		VALUES (?, ?, ?, ?, UTC_TIMESTAMP(6))`,
-		entitlement.Plate, nullableString(string(entitlement.Plan)), nullableString(entitlement.CompanyID), companyName,
-	); err != nil {
-		return fmt.Errorf("append entitlement change: %w", err)
+	if err := appendEntitlementChange(ctx, tx, EntitlementChange{
+		Plate:       entitlement.Plate,
+		Plan:        entitlement.Plan,
+		CompanyID:   entitlement.CompanyID,
+		CompanyName: companyName.String,
+	}); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit entitlement: %w", err)
+	}
+	return nil
+}
+
+// ApplySubscriptionEvent stores the event id and its effect on the subscription in one transaction.
+// An id already stored changes nothing and reports a duplicate. A paid event starts the Premium subscription
+// or extends its period, never shortening it, and an ended one cancels it. Each change appends to the log sites pull.
+func (s *Store) ApplySubscriptionEvent(ctx context.Context, event SubscriptionEvent) (EventOutcome, error) {
+	if event.Action == SubscriptionPaid && !normalizedPlate.MatchString(event.Plate) {
+		return "", ErrInvalidEntitlement
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin subscription event: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// ON DUPLICATE KEY forgives only the repeated id, where INSERT IGNORE would hide any other failure as a warning.
+	inserted, err := tx.ExecContext(ctx,
+		`INSERT INTO stripe_events (event_id, type, received_at) VALUES (?, ?, UTC_TIMESTAMP(6))
+		ON DUPLICATE KEY UPDATE event_id = event_id`,
+		event.EventID, event.EventType,
+	)
+	if err != nil {
+		return "", fmt.Errorf("store event id: %w", err)
+	}
+	rows, err := inserted.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("count stored event id: %w", err)
+	}
+	if rows == 0 {
+		return EventDuplicate, nil
+	}
+
+	outcome := EventIgnored
+	switch event.Action {
+	case SubscriptionPaid:
+		outcome, err = applyPaidSubscription(ctx, tx, event)
+	case SubscriptionEnded:
+		outcome, err = applyEndedSubscription(ctx, tx, event.StripeSubscriptionID)
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit subscription event: %w", err)
+	}
+	return outcome, nil
+}
+
+func applyPaidSubscription(ctx context.Context, tx *sql.Tx, event SubscriptionEvent) (EventOutcome, error) {
+	if err := lockEntitlementCursor(ctx, tx); err != nil {
+		return "", err
+	}
+	var plate, status string
+	err := tx.QueryRowContext(ctx,
+		"SELECT plate, status FROM subscriptions WHERE stripe_subscription_id = ? FOR UPDATE", event.StripeSubscriptionID,
+	).Scan(&plate, &status)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return startPaidSubscription(ctx, tx, event)
+	case err != nil:
+		return "", fmt.Errorf("read subscription: %w", err)
+	case status != "active":
+		// Stripe never revives a deleted subscription, so a paid invoice arriving after the deletion changes nothing.
+		return EventIgnored, nil
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE subscriptions SET current_period_end = GREATEST(COALESCE(current_period_end, ?), ?)
+		WHERE stripe_subscription_id = ?`,
+		event.PeriodEnd.UTC(), event.PeriodEnd.UTC(), event.StripeSubscriptionID,
+	); err != nil {
+		return "", fmt.Errorf("extend subscription: %w", err)
+	}
+	if err := appendEntitlementChange(ctx, tx, EntitlementChange{Plate: plate, Plan: PlanPremium}); err != nil {
+		return "", err
+	}
+	return EventApplied, nil
+}
+
+func startPaidSubscription(ctx context.Context, tx *sql.Tx, event SubscriptionEvent) (EventOutcome, error) {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO vehicles (plate, customer_id, company_id) VALUES (?, ?, NULL)
+		ON DUPLICATE KEY UPDATE customer_id = VALUES(customer_id), company_id = NULL`,
+		event.Plate, event.CustomerID,
+	)
+	if isForeignKeyMissing(err) {
+		return "", ErrUnknownCustomer
+	}
+	if err != nil {
+		return "", fmt.Errorf("write vehicle: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE subscriptions SET status = 'canceled' WHERE plate = ? AND status = 'active'", event.Plate,
+	); err != nil {
+		return "", fmt.Errorf("cancel active subscriptions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO subscriptions (id, plate, plan, customer_id, company_id, status, current_period_end, stripe_subscription_id)
+		VALUES (?, ?, 'premium', ?, NULL, 'active', ?, ?)`,
+		rand.Text(), event.Plate, event.CustomerID, event.PeriodEnd.UTC(), event.StripeSubscriptionID,
+	); err != nil {
+		return "", fmt.Errorf("write subscription: %w", err)
+	}
+	if err := appendEntitlementChange(ctx, tx, EntitlementChange{Plate: event.Plate, Plan: PlanPremium}); err != nil {
+		return "", err
+	}
+	return EventApplied, nil
+}
+
+func applyEndedSubscription(ctx context.Context, tx *sql.Tx, stripeSubscriptionID string) (EventOutcome, error) {
+	if err := lockEntitlementCursor(ctx, tx); err != nil {
+		return "", err
+	}
+	var plate string
+	err := tx.QueryRowContext(ctx,
+		"SELECT plate FROM subscriptions WHERE stripe_subscription_id = ? AND status = 'active' FOR UPDATE", stripeSubscriptionID,
+	).Scan(&plate)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EventIgnored, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read subscription: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE subscriptions SET status = 'canceled' WHERE stripe_subscription_id = ?", stripeSubscriptionID,
+	); err != nil {
+		return "", fmt.Errorf("cancel subscription: %w", err)
+	}
+	if err := appendEntitlementChange(ctx, tx, EntitlementChange{Plate: plate, Plan: PlanNone}); err != nil {
+		return "", err
+	}
+	return EventApplied, nil
+}
+
+// PremiumPrice reads the Premium price in öre that is valid at the given time.
+func (s *Store) PremiumPrice(ctx context.Context, at time.Time) (int64, error) {
+	var amountOre int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT amount_ore FROM prices WHERE code = 'premium' AND valid_from <= ?
+		ORDER BY valid_from DESC LIMIT 1`,
+		at.UTC(),
+	).Scan(&amountOre)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNoPremiumPrice
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read premium price: %w", err)
+	}
+	return amountOre, nil
+}
+
+// IsPlateHeldByAnother reports whether plate is registered to anyone but customerID, whether another
+// customer or a fleet company. Every subscription write registers the vehicle to its owner, so this covers them too.
+func (s *Store) IsPlateHeldByAnother(ctx context.Context, plate, customerID string) (bool, error) {
+	var held bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM vehicles
+		WHERE plate = ? AND (company_id IS NOT NULL OR (customer_id IS NOT NULL AND customer_id <> ?)))`,
+		plate, customerID,
+	).Scan(&held); err != nil {
+		return false, fmt.Errorf("read plate holder: %w", err)
+	}
+	return held, nil
+}
+
+// CustomerExists reports whether central holds a customer with id.
+func (s *Store) CustomerExists(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM customers WHERE id = ?)", id).Scan(&exists); err != nil {
+		return false, fmt.Errorf("read customer: %w", err)
+	}
+	return exists, nil
+}
+
+// lockEntitlementCursor takes the cursor row every entitlement writer holds until it commits, so changes
+// commit in seq order. Writers take it before any subscription row, which keeps two writers from deadlocking.
+func lockEntitlementCursor(ctx context.Context, tx *sql.Tx) error {
+	var cursor int
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM entitlement_cursor WHERE id = 1 FOR UPDATE").Scan(&cursor); err != nil {
+		return fmt.Errorf("lock entitlement cursor: %w", err)
+	}
+	return nil
+}
+
+// appendEntitlementChange adds change to the log sites pull. The caller holds the cursor lock.
+func appendEntitlementChange(ctx context.Context, tx *sql.Tx, change EntitlementChange) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO entitlement_changes (plate, plan, company_id, company_name, changed_at)
+		VALUES (?, ?, ?, ?, UTC_TIMESTAMP(6))`,
+		change.Plate, nullableString(string(change.Plan)), nullableString(change.CompanyID), nullableString(change.CompanyName),
+	); err != nil {
+		return fmt.Errorf("append entitlement change: %w", err)
 	}
 	return nil
 }
