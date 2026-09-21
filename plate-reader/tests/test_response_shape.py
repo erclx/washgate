@@ -1,6 +1,7 @@
 import tempfile
 from pathlib import Path
 
+import pytest
 from conftest import (
     FailingForwarder,
     FakeReader,
@@ -89,11 +90,12 @@ class TestImageLimits:
         assert response.status_code == 413
         assert reader.received == []
 
-    def test_leaves_no_file_on_disk_for_a_large_image(self) -> None:
-        temp_dir = Path(tempfile.gettempdir())
-        before = set(temp_dir.iterdir())
+    def test_leaves_no_file_on_disk_for_a_large_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
         client = build_client(FakeReader(build_plate_read()))
 
         client.post('/read', content=b'x' * 2 * 1024 * 1024, headers=JPEG)
 
-        assert set(temp_dir.iterdir()) == before
+        assert list(tmp_path.iterdir()) == []

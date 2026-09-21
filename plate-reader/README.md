@@ -13,7 +13,7 @@ The first read downloads the model weights, so it needs network once.
 
 | Variable         | Default | Meaning                                                                                                                   |
 | ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `SITE_AGENT_URL` | unset   | Where each read is posted, path included, such as `http://site-agent:8080/reads`. Unset skips the send and logs one line. |
+| `SITE_AGENT_URL` | unset   | Where each read is posted, path included, such as `http://site-agent:8081/reads`. Unset skips the send and logs one line. |
 
 ## Request
 
