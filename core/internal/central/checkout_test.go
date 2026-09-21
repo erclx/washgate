@@ -94,6 +94,22 @@ func TestPostCheckout(t *testing.T) {
 		}
 	})
 
+	t.Run("a taxi's trailing T is dropped the way the lane drops it", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		addPrice(t, database, "premium", 29900, testAdmittedAt.AddDate(-1, 0, 0))
+		server, received := fakeStripe(t, http.StatusOK, `{"id":"cs_test_1","url":"`+testCheckoutURL+`"}`)
+
+		recorder := postCheckout(t, NewRouter(store, newPayments(t, server.URL)), `{"customer_id": "customer-anna", "plate": "abc123t"}`)
+
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d, body %q", recorder.Code, http.StatusCreated, recorder.Body.String())
+		}
+		if got := received.Get("subscription_data[metadata][plate]"); got != "ABC123" {
+			t.Fatalf("stripe metadata plate = %q, want %q", got, "ABC123")
+		}
+	})
+
 	cases := []struct {
 		name string
 		body string
