@@ -95,3 +95,5 @@ nonroot
 healthcheck
 innodb
 VARCHAR
+livemode
+whsec

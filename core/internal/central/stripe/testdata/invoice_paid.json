@@ -1,0 +1,61 @@
+{
+  "id": "evt_test_invoice_paid_0001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1789975800,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": { "id": null, "idempotency_key": null },
+  "type": "invoice.paid",
+  "data": {
+    "object": {
+      "id": "in_test_0001",
+      "object": "invoice",
+      "amount_paid": 29900,
+      "billing_reason": "subscription_create",
+      "currency": "sek",
+      "customer": "cus_test_0001",
+      "livemode": false,
+      "status": "paid",
+      "parent": {
+        "type": "subscription_details",
+        "quote_details": null,
+        "subscription_details": {
+          "metadata": { "customer_id": "customer-anna", "plate": "ABC123" },
+          "subscription": "sub_test_0001"
+        }
+      },
+      "lines": {
+        "object": "list",
+        "has_more": false,
+        "total_count": 1,
+        "url": "/v1/invoices/in_test_0001/lines",
+        "data": [
+          {
+            "id": "il_test_0001",
+            "object": "line_item",
+            "amount": 29900,
+            "currency": "sek",
+            "description": "1 × Premium (at 299.00 kr / month)",
+            "metadata": { "customer_id": "customer-anna", "plate": "ABC123" },
+            "parent": {
+              "type": "subscription_item_details",
+              "invoice_item_details": null,
+              "subscription_item_details": {
+                "invoice_item": null,
+                "proration": false,
+                "proration_details": { "credited_items": null },
+                "subscription": "sub_test_0001",
+                "subscription_item": "si_test_0001"
+              }
+            },
+            "period": { "end": 1792654200, "start": 1789975800 },
+            "quantity": 1
+          }
+        ]
+      },
+      "period_end": 1789975800,
+      "period_start": 1789975800
+    }
+  }
+}
