@@ -92,6 +92,17 @@ func TestReadsAnswersEachDecision(t *testing.T) {
 	}
 }
 
+func TestReadsSendsAnUnknownPlateToStaffUntilTheFirstPull(t *testing.T) {
+	router := newTestRouter(t, openStore(t), testNow)
+
+	got := decodeAnswer(t, postRead(t, router, "application/json", `{"plate": "XYZ 789", "confidence": 0.995}`))
+
+	want := readAnswer{Decision: "staff", Reason: "unknown_plate_offline"}
+	if got != want {
+		t.Errorf("answer = %+v, want %+v", got, want)
+	}
+}
+
 func TestReadsAdmitsAFleetCarWithAWashID(t *testing.T) {
 	router := newTestRouter(t, openSeededStore(t), testNow)
 
