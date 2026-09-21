@@ -31,22 +31,37 @@ type Store struct {
 
 // PendingWash is an admitted wash waiting in the outbox for central to acknowledge it.
 type PendingWash struct {
-	ID         string
-	Plate      string
-	Plan       Plan
-	CompanyID  string
-	AdmittedAt time.Time
+	ID            string
+	Plate         string
+	Plan          Plan
+	CompanyID     string
+	PrepaidWashID string
+	AdmittedAt    time.Time
 }
 
-// EntitlementChange is one entry of central's change log. A zero Plan revokes the plate, and a
-// non-zero QuotaResetAt makes the monthly cap count from that instant.
+// ChangeKind is what an entry of central's change log changes: the plate's plan, or one prepaid wash.
+// The zero value is a plan change, which is how central sent every change before prepaid washes existed.
+type ChangeKind string
+
+// The kinds of change central sends.
+const (
+	ChangeKindPlan           ChangeKind = "plan"
+	ChangeKindPrepaidGranted ChangeKind = "prepaid_granted"
+	ChangeKindPrepaidSpent   ChangeKind = "prepaid_spent"
+)
+
+// EntitlementChange is one entry of central's change log. For a plan change, a zero Plan revokes
+// the plate and a non-zero QuotaResetAt makes the monthly cap count from that instant. A prepaid
+// change names its prepaid wash and leaves the plan alone.
 type EntitlementChange struct {
-	Seq          int64
-	Plate        string
-	Plan         Plan
-	CompanyID    string
-	CompanyName  string
-	QuotaResetAt time.Time
+	Seq           int64
+	Plate         string
+	Kind          ChangeKind
+	Plan          Plan
+	CompanyID     string
+	CompanyName   string
+	QuotaResetAt  time.Time
+	PrepaidWashID string
 }
 
 // Open opens the SQLite file at path and brings its schema up to date.
@@ -135,8 +150,8 @@ func (s *Store) applyMigration(ctx context.Context, migration schemaMigration) e
 	return nil
 }
 
-// Facts reads a plate's entitlement, its washes since the later of monthStart and its latest quota reset,
-// its most recent wash, and when the copy last pulled.
+// Facts reads a plate's entitlement, its Premium washes since the later of monthStart and its latest
+// quota reset, its most recent wash, its oldest unspent prepaid wash, and when the copy last pulled.
 func (s *Store) Facts(ctx context.Context, plate string, monthStart time.Time) (Facts, error) {
 	var facts Facts
 	var companyID sql.NullString
@@ -149,13 +164,22 @@ func (s *Store) Facts(ctx context.Context, plate string, monthStart time.Time) (
 	facts.Entitlement.CompanyID = companyID.String
 
 	err = s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM washes WHERE plate = ?
+		`SELECT COUNT(*) FROM washes WHERE plate = ? AND plan = 'premium'
 		AND admitted_at >= MAX(?, COALESCE((SELECT reset_at FROM quota_resets WHERE plate = ?), ''))`,
 		plate, formatTime(monthStart), plate,
 	).Scan(&facts.WashesThisMonth)
 	if err != nil {
 		return Facts{}, fmt.Errorf("count washes this month: %w", err)
 	}
+
+	var prepaidWashID sql.NullString
+	err = s.db.QueryRowContext(ctx,
+		"SELECT id FROM prepaid_washes WHERE plate = ? AND spent_at IS NULL ORDER BY rowid LIMIT 1", plate,
+	).Scan(&prepaidWashID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Facts{}, fmt.Errorf("read prepaid wash: %w", err)
+	}
+	facts.PrepaidWashID = prepaidWashID.String
 
 	lastWash, err := latestWash(ctx, s.db, plate)
 	if err != nil {
@@ -188,7 +212,8 @@ func (s *Store) LastPulledAt(ctx context.Context) (time.Time, error) {
 
 // RecordWash writes an admitted wash and its outbox entry, unless one for the plate already sits
 // inside the dedup window, in which case it returns that wash and reports it as a duplicate.
-func (s *Store) RecordWash(ctx context.Context, plate string, entitlement Entitlement, admittedAt time.Time, window time.Duration) (Wash, bool, error) {
+// A non-empty prepaidWashID is spent by the same transaction.
+func (s *Store) RecordWash(ctx context.Context, plate string, entitlement Entitlement, prepaidWashID string, admittedAt time.Time, window time.Duration) (Wash, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Wash{}, false, fmt.Errorf("begin wash: %w", err)
@@ -205,11 +230,16 @@ func (s *Store) RecordWash(ctx context.Context, plate string, entitlement Entitl
 
 	wash := Wash{ID: rand.Text(), AdmittedAt: admittedAt}
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO washes (id, plate, company_id, plan, admitted_at) VALUES (?, ?, ?, ?, ?)",
-		wash.ID, plate, nullableString(entitlement.CompanyID), entitlement.Plan, formatTime(admittedAt),
+		"INSERT INTO washes (id, plate, company_id, plan, prepaid_wash_id, admitted_at) VALUES (?, ?, ?, ?, ?, ?)",
+		wash.ID, plate, nullableString(entitlement.CompanyID), entitlement.Plan, nullableString(prepaidWashID), formatTime(admittedAt),
 	)
 	if err != nil {
 		return Wash{}, false, fmt.Errorf("insert wash: %w", err)
+	}
+	if prepaidWashID != "" {
+		if err := markPrepaidWashSpent(ctx, tx, prepaidWashID, admittedAt); err != nil {
+			return Wash{}, false, err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO outbox (wash_id) VALUES (?)", wash.ID); err != nil {
 		return Wash{}, false, fmt.Errorf("queue wash for central: %w", err)
@@ -223,7 +253,7 @@ func (s *Store) RecordWash(ctx context.Context, plate string, entitlement Entitl
 // PendingWashes reads up to limit washes from the outbox, oldest first.
 func (s *Store) PendingWashes(ctx context.Context, limit int) ([]PendingWash, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT washes.id, washes.plate, washes.plan, washes.company_id, washes.admitted_at
+		`SELECT washes.id, washes.plate, washes.plan, washes.company_id, washes.prepaid_wash_id, washes.admitted_at
 		FROM outbox JOIN washes ON washes.id = outbox.wash_id
 		ORDER BY washes.admitted_at, washes.id LIMIT ?`,
 		limit,
@@ -236,12 +266,13 @@ func (s *Store) PendingWashes(ctx context.Context, limit int) ([]PendingWash, er
 	pending := []PendingWash{}
 	for rows.Next() {
 		var wash PendingWash
-		var companyID sql.NullString
+		var companyID, prepaidWashID sql.NullString
 		var admittedAt string
-		if err := rows.Scan(&wash.ID, &wash.Plate, &wash.Plan, &companyID, &admittedAt); err != nil {
+		if err := rows.Scan(&wash.ID, &wash.Plate, &wash.Plan, &companyID, &prepaidWashID, &admittedAt); err != nil {
 			return nil, fmt.Errorf("scan outbox wash: %w", err)
 		}
 		wash.CompanyID = companyID.String
+		wash.PrepaidWashID = prepaidWashID.String
 		wash.AdmittedAt, err = time.Parse(timeLayout, admittedAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse wash time: %w", err)
@@ -299,7 +330,7 @@ func (s *Store) ApplyChanges(ctx context.Context, changes []EntitlementChange, n
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, change := range changes {
-		if err := applyChange(ctx, tx, change); err != nil {
+		if err := applyChange(ctx, tx, change, pulledAt); err != nil {
 			return fmt.Errorf("apply entitlement change %d: %w", change.Seq, err)
 		}
 	}
@@ -314,7 +345,38 @@ func (s *Store) ApplyChanges(ctx context.Context, changes []EntitlementChange, n
 	return nil
 }
 
-func applyChange(ctx context.Context, tx *sql.Tx, change EntitlementChange) error {
+func applyChange(ctx context.Context, tx *sql.Tx, change EntitlementChange, pulledAt time.Time) error {
+	switch change.Kind {
+	case "", ChangeKindPlan:
+		return applyPlanChange(ctx, tx, change)
+	case ChangeKindPrepaidGranted:
+		// A grant pulled again, after a spend here or anywhere, finds the row and changes nothing.
+		if _, err := tx.ExecContext(ctx,
+			"INSERT INTO prepaid_washes (id, plate) VALUES (?, ?) ON CONFLICT (id) DO NOTHING",
+			change.PrepaidWashID, change.Plate,
+		); err != nil {
+			return fmt.Errorf("write prepaid wash: %w", err)
+		}
+		return nil
+	case ChangeKindPrepaidSpent:
+		return markPrepaidWashSpent(ctx, tx, change.PrepaidWashID, pulledAt)
+	default:
+		return fmt.Errorf("unknown change kind %q", change.Kind)
+	}
+}
+
+// markPrepaidWashSpent only ever fills a spend, so neither a replayed pull nor a local spend racing one undoes another.
+func markPrepaidWashSpent(ctx context.Context, tx *sql.Tx, prepaidWashID string, spentAt time.Time) error {
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE prepaid_washes SET spent_at = ? WHERE id = ? AND spent_at IS NULL",
+		formatTime(spentAt), prepaidWashID,
+	); err != nil {
+		return fmt.Errorf("spend prepaid wash: %w", err)
+	}
+	return nil
+}
+
+func applyPlanChange(ctx context.Context, tx *sql.Tx, change EntitlementChange) error {
 	if !change.QuotaResetAt.IsZero() {
 		// A reset only ever moves forward, so a change replayed out of order cannot undo a later one.
 		if _, err := tx.ExecContext(ctx,

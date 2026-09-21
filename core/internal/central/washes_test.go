@@ -139,6 +139,32 @@ func TestPostWashes(t *testing.T) {
 		}
 	})
 
+	t.Run("stores a prepaid wash naming a granted prepaid wash", func(t *testing.T) {
+		store, database := newTestStore(t)
+		token := provisionSite(t, store, testSiteID)
+		addCustomer(t, database, testCustomerID)
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+		wash := fmt.Sprintf(`{"id": "w1", "plate": %q, "plan": "prepaid", "prepaid_wash_id": %q, "admitted_at": "2026-09-21T07:30:00Z"}`, testPrepaidPlate, testPrepaidWashID)
+
+		answer := decodeWashesAnswer(t, postWashes(t, NewRouter(store, nil), token, "application/json", washBatchBody(testSiteID, wash)))
+
+		if !slices.Equal(answer.Stored, []string{"w1"}) {
+			t.Fatalf("answer = %+v, want w1 stored", answer)
+		}
+	})
+
+	t.Run("rejects a prepaid wash central never granted with 422", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		token := provisionSite(t, store, testSiteID)
+		wash := `{"id": "w1", "plate": "XYZ789", "plan": "prepaid", "prepaid_wash_id": "cs_test_never", "admitted_at": "2026-09-21T07:30:00Z"}`
+
+		recorder := postWashes(t, NewRouter(store, nil), token, "application/json", washBatchBody(testSiteID, wash))
+
+		if recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
+		}
+	})
+
 	cases := []struct {
 		name string
 		body string
@@ -153,6 +179,10 @@ func TestPostWashes(t *testing.T) {
 		{name: "an unknown plan", body: washBatchBody(testSiteID, `{"id": "w1", "plate": "ABC123", "plan": "gold", "admitted_at": "2026-09-21T07:30:00Z"}`)},
 		{name: "a fleet wash with no company", body: washBatchBody(testSiteID, `{"id": "w1", "plate": "FLT001", "plan": "fleet", "admitted_at": "2026-09-21T07:30:00Z"}`)},
 		{name: "a premium wash naming a company", body: washBatchBody(testSiteID, `{"id": "w1", "plate": "ABC123", "plan": "premium", "company_id": "company-nordfrakt", "admitted_at": "2026-09-21T07:30:00Z"}`)},
+		{name: "a prepaid wash naming no prepaid wash", body: washBatchBody(testSiteID, `{"id": "w1", "plate": "XYZ789", "plan": "prepaid", "admitted_at": "2026-09-21T07:30:00Z"}`)},
+		{name: "a prepaid wash naming a company", body: washBatchBody(testSiteID, `{"id": "w1", "plate": "XYZ789", "plan": "prepaid", "prepaid_wash_id": "cs_test_1", "company_id": "company-nordfrakt", "admitted_at": "2026-09-21T07:30:00Z"}`)},
+		{name: "a premium wash naming a prepaid wash", body: washBatchBody(testSiteID, `{"id": "w1", "plate": "ABC123", "plan": "premium", "prepaid_wash_id": "cs_test_1", "admitted_at": "2026-09-21T07:30:00Z"}`)},
+		{name: "a fleet wash naming a prepaid wash", body: washBatchBody(testSiteID, `{"id": "w1", "plate": "FLT001", "plan": "fleet", "company_id": "company-nordfrakt", "prepaid_wash_id": "cs_test_1", "admitted_at": "2026-09-21T07:30:00Z"}`)},
 	}
 	for _, testCase := range cases {
 		t.Run("rejects "+testCase.name+" with 400", func(t *testing.T) {

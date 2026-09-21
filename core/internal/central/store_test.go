@@ -311,7 +311,7 @@ func TestEntitlementChanges(t *testing.T) {
 
 		changes := readChanges(t, store, 0, 10)
 
-		want := EntitlementChange{Seq: changes[0].Seq, Plate: "FLT001", Plan: PlanFleet, CompanyID: testCompanyID, CompanyName: testCompanyName}
+		want := EntitlementChange{Seq: changes[0].Seq, Plate: "FLT001", Kind: ChangeKindPlan, Plan: PlanFleet, CompanyID: testCompanyID, CompanyName: testCompanyName}
 		if changes[0] != want {
 			t.Fatalf("change = %+v, want %+v", changes[0], want)
 		}
@@ -901,4 +901,271 @@ func TestCustomerExists(t *testing.T) {
 	if !known || unknown {
 		t.Fatalf("exists = %t for the customer and %t for nobody, want true and false", known, unknown)
 	}
+}
+
+const (
+	testPrepaidWashID = "cs_test_single_wash_1"
+	testPrepaidPlate  = "XYZ789"
+)
+
+type storedPrepaidWash struct {
+	ID          string
+	Plate       string
+	SpentWashID string
+}
+
+func singleWashGrant(eventID, prepaidWashID string) PrepaidGrant {
+	return PrepaidGrant{
+		EventID:       eventID,
+		EventType:     "checkout.session.completed",
+		PrepaidWashID: prepaidWashID,
+		CustomerID:    testCustomerID,
+		Plate:         testPrepaidPlate,
+	}
+}
+
+func grantPrepaidWash(t *testing.T, store *Store, grant PrepaidGrant) EventOutcome {
+	t.Helper()
+	outcome, err := store.GrantPrepaidWash(t.Context(), grant)
+	if err != nil {
+		t.Fatalf("grant prepaid wash %s: %v", grant.PrepaidWashID, err)
+	}
+	return outcome
+}
+
+func prepaidWash(id, prepaidWashID string) Wash {
+	return Wash{ID: id, Plate: testPrepaidPlate, Plan: PlanPrepaid, PrepaidWashID: prepaidWashID, AdmittedAt: testAdmittedAt}
+}
+
+func readPrepaidWashes(t *testing.T, database *testdb.Database) []storedPrepaidWash {
+	t.Helper()
+	rows, err := database.SQL.QueryContext(t.Context(), "SELECT id, plate, spent_wash_id FROM prepaid_washes ORDER BY id")
+	if err != nil {
+		t.Fatalf("read prepaid washes: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	prepaidWashes := []storedPrepaidWash{}
+	for rows.Next() {
+		var prepaid storedPrepaidWash
+		var spentWashID sql.NullString
+		if err := rows.Scan(&prepaid.ID, &prepaid.Plate, &spentWashID); err != nil {
+			t.Fatalf("scan prepaid wash: %v", err)
+		}
+		prepaid.SpentWashID = spentWashID.String
+		prepaidWashes = append(prepaidWashes, prepaid)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate prepaid washes: %v", err)
+	}
+	return prepaidWashes
+}
+
+func changeKinds(changes []EntitlementChange) []ChangeKind {
+	kinds := make([]ChangeKind, 0, len(changes))
+	for _, change := range changes {
+		kinds = append(kinds, change.Kind)
+	}
+	return kinds
+}
+
+func TestGrantPrepaidWash(t *testing.T) {
+	t.Run("a grant stores one prepaid wash and appends one change naming it", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+
+		outcome := grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+
+		if outcome != EventApplied {
+			t.Fatalf("outcome = %s, want applied", outcome)
+		}
+		want := storedPrepaidWash{ID: testPrepaidWashID, Plate: testPrepaidPlate}
+		if got := readPrepaidWashes(t, database); len(got) != 1 || got[0] != want {
+			t.Fatalf("prepaid washes = %+v, want [%+v]", got, want)
+		}
+		changes := readChanges(t, store, 0, 10)
+		wantChange := EntitlementChange{Seq: changes[0].Seq, Plate: testPrepaidPlate, Kind: ChangeKindPrepaidGranted, PrepaidWashID: testPrepaidWashID}
+		if len(changes) != 1 || changes[0] != wantChange {
+			t.Fatalf("changes = %+v, want [%+v]", changes, wantChange)
+		}
+	})
+
+	t.Run("the same event id again changes nothing", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+
+		outcome := grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+
+		if outcome != EventDuplicate {
+			t.Fatalf("outcome = %s, want duplicate", outcome)
+		}
+		if got := readPrepaidWashes(t, database); len(got) != 1 {
+			t.Fatalf("prepaid washes = %d, want 1", len(got))
+		}
+		if got := readChanges(t, store, 0, 10); len(got) != 1 {
+			t.Fatalf("changes = %d, want 1", len(got))
+		}
+	})
+
+	t.Run("a second event naming the same session changes nothing", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+
+		outcome := grantPrepaidWash(t, store, singleWashGrant("evt_2", testPrepaidWashID))
+
+		if outcome != EventIgnored {
+			t.Fatalf("outcome = %s, want ignored", outcome)
+		}
+		if got := readPrepaidWashes(t, database); len(got) != 1 {
+			t.Fatalf("prepaid washes = %d, want 1", len(got))
+		}
+		if got := readChanges(t, store, 0, 10); len(got) != 1 {
+			t.Fatalf("changes = %d, want 1", len(got))
+		}
+	})
+
+	t.Run("an unowned plate is registered to the buyer", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+
+		held, err := store.IsPlateHeldByAnother(t.Context(), testPrepaidPlate, "customer-bo")
+		if err != nil || !held {
+			t.Fatalf("held by another than the buyer = %t, error = %v, want true", held, err)
+		}
+	})
+
+	t.Run("a plate registered to someone else stays theirs", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		addCustomer(t, database, "customer-bo")
+		putEntitlement(t, store, Entitlement{Plate: testPrepaidPlate, Plan: PlanPremium, CustomerID: "customer-bo"})
+
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+
+		held, err := store.IsPlateHeldByAnother(t.Context(), testPrepaidPlate, testCustomerID)
+		if err != nil || !held {
+			t.Fatalf("held by another than the buyer = %t, error = %v, want true", held, err)
+		}
+	})
+
+	t.Run("an unknown customer is rejected and stores nothing", func(t *testing.T) {
+		store, database := newTestStore(t)
+
+		_, err := store.GrantPrepaidWash(t.Context(), singleWashGrant("evt_1", testPrepaidWashID))
+
+		if !errors.Is(err, ErrUnknownCustomer) {
+			t.Fatalf("error = %v, want ErrUnknownCustomer", err)
+		}
+		if got := countStripeEvents(t, database); got != 0 {
+			t.Fatalf("stripe events = %d, want 0 so Stripe's retry can apply it", got)
+		}
+	})
+}
+
+func TestRecordWashesSpendsAPrepaidWash(t *testing.T) {
+	t.Run("a pushed prepaid wash marks it spent and appends one spend", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addSite(t, database, testSiteID)
+		addCustomer(t, database, testCustomerID)
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+
+		if _, err := store.RecordWashes(t.Context(), testSiteID, []Wash{prepaidWash("w1", testPrepaidWashID)}); err != nil {
+			t.Fatalf("record washes: %v", err)
+		}
+
+		if got := readPrepaidWashes(t, database); len(got) != 1 || got[0].SpentWashID != "w1" {
+			t.Fatalf("prepaid washes = %+v, want spent by w1", got)
+		}
+		changes := readChanges(t, store, 0, 10)
+		if got := changeKinds(changes); !slices.Equal(got, []ChangeKind{ChangeKindPrepaidGranted, ChangeKindPrepaidSpent}) {
+			t.Fatalf("change kinds = %v, want a grant then a spend", got)
+		}
+		if changes[1].PrepaidWashID != testPrepaidWashID || changes[1].Plate != testPrepaidPlate {
+			t.Fatalf("spend = %+v, want %s on %s", changes[1], testPrepaidWashID, testPrepaidPlate)
+		}
+	})
+
+	t.Run("the same wash pushed again appends nothing", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addSite(t, database, testSiteID)
+		addCustomer(t, database, testCustomerID)
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+		batch := []Wash{prepaidWash("w1", testPrepaidWashID)}
+		if _, err := store.RecordWashes(t.Context(), testSiteID, batch); err != nil {
+			t.Fatalf("record first batch: %v", err)
+		}
+
+		if _, err := store.RecordWashes(t.Context(), testSiteID, batch); err != nil {
+			t.Fatalf("replay batch: %v", err)
+		}
+
+		if got := readChanges(t, store, 0, 10); len(got) != 2 {
+			t.Fatalf("changes = %d, want 2", len(got))
+		}
+	})
+
+	t.Run("a second wash from another site on the same prepaid wash is stored and the first spend stays", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addSite(t, database, testSiteID)
+		addSite(t, database, "site-kista")
+		addCustomer(t, database, testCustomerID)
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+		if _, err := store.RecordWashes(t.Context(), testSiteID, []Wash{prepaidWash("w1", testPrepaidWashID)}); err != nil {
+			t.Fatalf("record first spend: %v", err)
+		}
+
+		result, err := store.RecordWashes(t.Context(), "site-kista", []Wash{prepaidWash("w2", testPrepaidWashID)})
+
+		if err != nil || !slices.Equal(result.Stored, []string{"w2"}) {
+			t.Fatalf("result = %+v, error = %v, want w2 stored", result, err)
+		}
+		if got := readPrepaidWashes(t, database); len(got) != 1 || got[0].SpentWashID != "w1" {
+			t.Fatalf("prepaid washes = %+v, want still spent by w1", got)
+		}
+		if got := readChanges(t, store, 0, 10); len(got) != 2 {
+			t.Fatalf("changes = %d, want 2", len(got))
+		}
+	})
+
+	t.Run("a prepaid wash central never granted is rejected and stores nothing", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addSite(t, database, testSiteID)
+
+		_, err := store.RecordWashes(t.Context(), testSiteID, []Wash{premiumWash("w1", "ABC123"), prepaidWash("w2", "cs_test_never")})
+
+		if !errors.Is(err, ErrUnknownPrepaidWash) {
+			t.Fatalf("error = %v, want ErrUnknownPrepaidWash", err)
+		}
+		if got := countWashes(t, database); got != 0 {
+			t.Fatalf("washes = %d, want 0", got)
+		}
+	})
+}
+
+func TestSingleWashPrice(t *testing.T) {
+	t.Run("reads the single_wash price in force", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addPrice(t, database, "premium", 29900, testAdmittedAt.AddDate(-1, 0, 0))
+		addPrice(t, database, "single_wash", 19900, testAdmittedAt.AddDate(-1, 0, 0))
+
+		amountOre, err := store.SingleWashPrice(t.Context(), testAdmittedAt)
+
+		if err != nil || amountOre != 19900 {
+			t.Fatalf("price = %d, error = %v, want 19900", amountOre, err)
+		}
+	})
+
+	t.Run("no single_wash price reports ErrNoSingleWashPrice", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addPrice(t, database, "premium", 29900, testAdmittedAt.AddDate(-1, 0, 0))
+
+		_, err := store.SingleWashPrice(t.Context(), testAdmittedAt)
+
+		if !errors.Is(err, ErrNoSingleWashPrice) {
+			t.Fatalf("error = %v, want ErrNoSingleWashPrice", err)
+		}
+	})
 }

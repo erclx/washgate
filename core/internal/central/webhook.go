@@ -34,18 +34,33 @@ func (b *billing) handlePostStripeWebhook(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	outcome, err := b.store.ApplySubscriptionEvent(r.Context(), subscriptionEvent(event))
+	var outcome EventOutcome
+	logAttributes := []any{"event_id", event.ID, "event_type", event.Type}
+	// A subscription's own session completes too, and its Premium starts on invoice.paid, so only a
+	// settled single-wash payment grants here. Every other session event is stored and ignored.
+	if session := event.CheckoutSessionCompleted; session != nil && session.IsPaidSingleWash() {
+		logAttributes = append(logAttributes, "prepaid_wash_id", session.SessionID)
+		outcome, err = b.store.GrantPrepaidWash(r.Context(), PrepaidGrant{
+			EventID:       event.ID,
+			EventType:     event.Type,
+			PrepaidWashID: session.SessionID,
+			CustomerID:    session.CustomerID,
+			Plate:         session.Plate,
+		})
+	} else {
+		outcome, err = b.store.ApplySubscriptionEvent(r.Context(), subscriptionEvent(event))
+	}
 	if errors.Is(err, ErrUnknownCustomer) || errors.Is(err, ErrInvalidEntitlement) {
-		slog.Warn("stripe event rejected", "event_id", event.ID, "event_type", event.Type, "reason", err.Error())
+		slog.Warn("stripe event rejected", append(logAttributes, "reason", err.Error())...)
 		http.Error(w, "the event names a customer or plate central cannot apply", http.StatusUnprocessableEntity)
 		return
 	}
 	if err != nil {
-		slog.Error("stripe event failed", "event_id", event.ID, "event_type", event.Type, "error", err)
+		slog.Error("stripe event failed", append(logAttributes, "error", err)...)
 		http.Error(w, "central could not apply this event", http.StatusInternalServerError)
 		return
 	}
-	slog.Info("stripe event handled", "event_id", event.ID, "event_type", event.Type, "outcome", string(outcome))
+	slog.Info("stripe event handled", append(logAttributes, "outcome", string(outcome))...)
 	w.WriteHeader(http.StatusOK)
 }
 

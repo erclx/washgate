@@ -9,19 +9,40 @@ import (
 
 // The event types central acts on. Every other type decodes to its envelope alone.
 const (
-	EventInvoicePaid         = "invoice.paid"
-	EventSubscriptionDeleted = "customer.subscription.deleted"
+	EventInvoicePaid              = "invoice.paid"
+	EventSubscriptionDeleted      = "customer.subscription.deleted"
+	EventCheckoutSessionCompleted = "checkout.session.completed"
 )
+
+// SessionKindSingleWash is the metadata kind a single wash's Checkout session carries.
+const SessionKindSingleWash = "single_wash"
 
 // ErrIncompleteEvent reports an event missing a field central needs, which usually means an API version mismatch.
 var ErrIncompleteEvent = errors.New("incomplete Stripe event")
 
 // Event is a webhook event's envelope and, for a handled type, its decoded object.
 type Event struct {
-	ID                  string
-	Type                string
-	InvoicePaid         *InvoicePaid
-	SubscriptionDeleted *SubscriptionDeleted
+	ID                       string
+	Type                     string
+	InvoicePaid              *InvoicePaid
+	SubscriptionDeleted      *SubscriptionDeleted
+	CheckoutSessionCompleted *CheckoutSessionCompleted
+}
+
+// CheckoutSessionCompleted is a finished Checkout session: its id, whether it was a subscription or a
+// one-off payment and whether that payment has settled, and the metadata a single wash's session carries.
+type CheckoutSessionCompleted struct {
+	SessionID     string
+	Mode          string
+	PaymentStatus string
+	Kind          string
+	CustomerID    string
+	Plate         string
+}
+
+// IsPaidSingleWash reports a one-off payment for a single wash that has settled.
+func (s CheckoutSessionCompleted) IsPaidSingleWash() bool {
+	return s.Mode == "payment" && s.PaymentStatus == "paid" && s.Kind == SessionKindSingleWash
 }
 
 // InvoicePaid is a paid subscription invoice: the subscription it pays for, the metadata
@@ -71,6 +92,17 @@ type subscriptionObject struct {
 	ID string `json:"id"`
 }
 
+type checkoutSessionObject struct {
+	ID            string `json:"id"`
+	Mode          string `json:"mode"`
+	PaymentStatus string `json:"payment_status"`
+	Metadata      struct {
+		Kind       string `json:"kind"`
+		CustomerID string `json:"customer_id"`
+		Plate      string `json:"plate"`
+	} `json:"metadata"`
+}
+
 // DecodeEvent reads a webhook payload in the shape of APIVersion.
 func DecodeEvent(payload []byte) (Event, error) {
 	var raw envelope
@@ -108,6 +140,22 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return Event{}, fmt.Errorf("%w: subscription without an id", ErrIncompleteEvent)
 		}
 		event.SubscriptionDeleted = &SubscriptionDeleted{SubscriptionID: subscription.ID}
+	case EventCheckoutSessionCompleted:
+		var session checkoutSessionObject
+		if err := json.Unmarshal(raw.Data.Object, &session); err != nil {
+			return Event{}, fmt.Errorf("%w: checkout session: %w", ErrIncompleteEvent, err)
+		}
+		if session.ID == "" {
+			return Event{}, fmt.Errorf("%w: checkout session without an id", ErrIncompleteEvent)
+		}
+		event.CheckoutSessionCompleted = &CheckoutSessionCompleted{
+			SessionID:     session.ID,
+			Mode:          session.Mode,
+			PaymentStatus: session.PaymentStatus,
+			Kind:          session.Metadata.Kind,
+			CustomerID:    session.Metadata.CustomerID,
+			Plate:         session.Metadata.Plate,
+		}
 	}
 	return event, nil
 }

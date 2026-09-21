@@ -10,13 +10,15 @@ import (
 )
 
 const (
-	maxWashesPerBatch   = 500
-	maxWashBodyBytes    = 256 << 10
-	maxWashIDLength     = 64
-	maxPlateLength      = 16
-	maxReferenceLength  = 64
-	washBatchMediaType  = "application/json"
-	rejectedBatchReason = "the batch needs a site_id and 1 to 500 washes, each with an id, a plate, a plan of premium or fleet, and an admitted_at, where only a fleet wash names its company_id"
+	maxWashesPerBatch  = 500
+	maxWashBodyBytes   = 256 << 10
+	maxWashIDLength    = 64
+	maxPlateLength     = 16
+	maxReferenceLength = 64
+	// maxPrepaidWashIDLength fits the Checkout session id a prepaid wash is keyed on.
+	maxPrepaidWashIDLength = 255
+	washBatchMediaType     = "application/json"
+	rejectedBatchReason    = "the batch needs a site_id and 1 to 500 washes, each with an id, a plate, a plan of premium, fleet, or prepaid, and an admitted_at, where only a fleet wash names its company_id and only a prepaid wash names its prepaid_wash_id"
 )
 
 type washBatchRequest struct {
@@ -25,11 +27,12 @@ type washBatchRequest struct {
 }
 
 type washRequest struct {
-	ID         string    `json:"id"`
-	Plate      string    `json:"plate"`
-	Plan       Plan      `json:"plan"`
-	CompanyID  string    `json:"company_id"`
-	AdmittedAt time.Time `json:"admitted_at"`
+	ID            string    `json:"id"`
+	Plate         string    `json:"plate"`
+	Plan          Plan      `json:"plan"`
+	CompanyID     string    `json:"company_id"`
+	PrepaidWashID string    `json:"prepaid_wash_id"`
+	AdmittedAt    time.Time `json:"admitted_at"`
 }
 
 type washBatchResponse struct {
@@ -64,9 +67,9 @@ func (l *ledger) handlePostWashes(w http.ResponseWriter, r *http.Request) {
 		washes = append(washes, Wash(wash))
 	}
 	result, err := l.store.RecordWashes(r.Context(), batch.SiteID, washes)
-	if errors.Is(err, ErrUnknownSite) || errors.Is(err, ErrUnknownCompany) {
+	if errors.Is(err, ErrUnknownSite) || errors.Is(err, ErrUnknownCompany) || errors.Is(err, ErrUnknownPrepaidWash) {
 		slog.Warn("wash batch rejected", "site_id", batch.SiteID, "batch_size", len(washes), "reason", err.Error())
-		http.Error(w, "the batch names a site or company central does not know", http.StatusUnprocessableEntity)
+		http.Error(w, "the batch names a site, company, or prepaid wash central does not know", http.StatusUnprocessableEntity)
 		return
 	}
 	if err != nil {
@@ -76,9 +79,12 @@ func (l *ledger) handlePostWashes(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("wash batch stored", "site_id", batch.SiteID, "batch_size", len(washes),
 		"stored", len(result.Stored), "duplicates", len(result.Duplicates))
+	for _, prepaidWashID := range result.SpentPrepaidWashes {
+		slog.Info("prepaid wash spent", "site_id", batch.SiteID, "prepaid_wash_id", prepaidWashID)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(washBatchResponse(result))
+	_ = json.NewEncoder(w).Encode(washBatchResponse{Stored: result.Stored, Duplicates: result.Duplicates})
 }
 
 func isValidBatch(batch washBatchRequest) bool {
@@ -99,9 +105,11 @@ func isValidWash(wash washRequest) bool {
 	}
 	switch wash.Plan {
 	case PlanFleet:
-		return isPresentWithin(wash.CompanyID, maxReferenceLength)
+		return isPresentWithin(wash.CompanyID, maxReferenceLength) && wash.PrepaidWashID == ""
 	case PlanPremium:
-		return wash.CompanyID == ""
+		return wash.CompanyID == "" && wash.PrepaidWashID == ""
+	case PlanPrepaid:
+		return wash.CompanyID == "" && isPresentWithin(wash.PrepaidWashID, maxPrepaidWashIDLength)
 	default:
 		return false
 	}

@@ -41,7 +41,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("stripe answered %d %s %s: %s", e.Status, e.Type, e.Code, e.Message)
 }
 
-// CheckoutRequest is one customer paying for Premium on one plate.
+// CheckoutRequest is one customer paying for Premium or a single wash on one plate.
 type CheckoutRequest struct {
 	CustomerID string
 	Plate      string
@@ -78,19 +78,37 @@ func NewClient(baseURL, secretKey string) (*Client, error) {
 // CreateCheckoutSession opens a Checkout session for a monthly Premium subscription priced inline in SEK.
 // The subscription carries the customer and plate as metadata, so its paid invoices name them.
 func (c *Client) CreateCheckoutSession(ctx context.Context, request CheckoutRequest) (CheckoutSession, error) {
-	form := url.Values{
-		"mode":                                   {"subscription"},
+	form := checkoutForm(request, "subscription", "Premium")
+	form.Set("line_items[0][price_data][recurring][interval]", "month")
+	form.Set("subscription_data[metadata][customer_id]", request.CustomerID)
+	form.Set("subscription_data[metadata][plate]", request.Plate)
+	return c.createCheckoutSession(ctx, form)
+}
+
+// CreateSingleWashSession opens a Checkout session for one wash paid once, priced inline in SEK.
+// The session carries the customer and plate as metadata, so its completed event names them.
+func (c *Client) CreateSingleWashSession(ctx context.Context, request CheckoutRequest) (CheckoutSession, error) {
+	form := checkoutForm(request, "payment", "Single wash")
+	form.Set("metadata[kind]", SessionKindSingleWash)
+	form.Set("metadata[customer_id]", request.CustomerID)
+	form.Set("metadata[plate]", request.Plate)
+	return c.createCheckoutSession(ctx, form)
+}
+
+func checkoutForm(request CheckoutRequest, mode, productName string) url.Values {
+	return url.Values{
+		"mode":                                   {mode},
 		"client_reference_id":                    {request.CustomerID},
 		"success_url":                            {request.SuccessURL},
 		"cancel_url":                             {request.CancelURL},
 		"line_items[0][quantity]":                {"1"},
 		"line_items[0][price_data][currency]":    {"sek"},
 		"line_items[0][price_data][unit_amount]": {strconv.FormatInt(request.AmountOre, 10)},
-		"line_items[0][price_data][recurring][interval]": {"month"},
-		"line_items[0][price_data][product_data][name]":  {"Premium"},
-		"subscription_data[metadata][customer_id]":       {request.CustomerID},
-		"subscription_data[metadata][plate]":             {request.Plate},
+		"line_items[0][price_data][product_data][name]": {productName},
 	}
+}
+
+func (c *Client) createCheckoutSession(ctx context.Context, form url.Values) (CheckoutSession, error) {
 	var session CheckoutSession
 	if err := c.post(ctx, "/v1/checkout/sessions", form, &session); err != nil {
 		return CheckoutSession{}, fmt.Errorf("create checkout session: %w", err)

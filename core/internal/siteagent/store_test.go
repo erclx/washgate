@@ -57,7 +57,7 @@ func recordWash(t *testing.T, store *Store, plate string, admittedAt time.Time) 
 	if err != nil {
 		t.Fatalf("read facts: %v", err)
 	}
-	wash, isDuplicate, err := store.RecordWash(t.Context(), plate, facts.Entitlement, admittedAt, testWindow)
+	wash, isDuplicate, err := store.RecordWash(t.Context(), plate, facts.Entitlement, "", admittedAt, testWindow)
 	if err != nil {
 		t.Fatalf("record wash: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestStoreReopensAnExistingCopyWithoutReapplyingItsSchema(t *testing.T) {
 func TestSchemaDownMigrationsDropEveryTable(t *testing.T) {
 	store := openSeededStore(t)
 	recordWash(t, store, "ABC123", testNow)
-	downs := []string{"schema/003_quota.down.sql", "schema/002_sync.down.sql", "schema/001_init.down.sql"}
+	downs := []string{"schema/004_prepaid.down.sql", "schema/003_quota.down.sql", "schema/002_sync.down.sql", "schema/001_init.down.sql"}
 
 	for _, name := range downs {
 		down, err := schemaFiles.ReadFile(name)
@@ -511,4 +511,169 @@ func TestStoreQuotaReset(t *testing.T) {
 			t.Errorf("washes counted = %d, want 0", got)
 		}
 	})
+}
+
+const testPrepaidWashID = "cs_test_single_wash_1"
+
+func grantedChange(seq int64, plate, prepaidWashID string) EntitlementChange {
+	return EntitlementChange{Seq: seq, Plate: plate, Kind: ChangeKindPrepaidGranted, PrepaidWashID: prepaidWashID}
+}
+
+func spentChange(seq int64, plate, prepaidWashID string) EntitlementChange {
+	return EntitlementChange{Seq: seq, Plate: plate, Kind: ChangeKindPrepaidSpent, PrepaidWashID: prepaidWashID}
+}
+
+func prepaidWashOf(t *testing.T, store *Store, plate string) string {
+	t.Helper()
+	facts, err := store.Facts(t.Context(), plate, MonthStart(testNow, time.UTC))
+	if err != nil {
+		t.Fatalf("read facts: %v", err)
+	}
+	return facts.PrepaidWashID
+}
+
+func spendPrepaidWash(t *testing.T, store *Store, plate, prepaidWashID string, admittedAt time.Time) Wash {
+	t.Helper()
+	wash, _, err := store.RecordWash(t.Context(), plate, Entitlement{Plan: PlanPrepaid}, prepaidWashID, admittedAt, testWindow)
+	if err != nil {
+		t.Fatalf("record prepaid wash: %v", err)
+	}
+	return wash
+}
+
+func TestStorePrepaidWash(t *testing.T) {
+	t.Run("a granted prepaid wash is read with the plate's facts", func(t *testing.T) {
+		store := openSeededStore(t)
+
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID))
+
+		if got := prepaidWashOf(t, store, "XYZ789"); got != testPrepaidWashID {
+			t.Errorf("prepaid wash = %q, want %q", got, testPrepaidWashID)
+		}
+	})
+
+	t.Run("a grant leaves the plate's plan as it was", func(t *testing.T) {
+		store := openSeededStore(t)
+
+		applyChanges(t, store, grantedChange(6, "ABC123", testPrepaidWashID))
+
+		if got := entitlementOf(t, store, "ABC123"); got != (Entitlement{Plan: PlanPremium}) {
+			t.Errorf("entitlement = %+v, want premium kept", got)
+		}
+	})
+
+	t.Run("spending it at this site hides it", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID))
+
+		spendPrepaidWash(t, store, "XYZ789", testPrepaidWashID, testNow)
+
+		if got := prepaidWashOf(t, store, "XYZ789"); got != "" {
+			t.Errorf("prepaid wash = %q, want none left", got)
+		}
+	})
+
+	t.Run("the same grant pulled again does not bring a spent wash back", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID))
+		spendPrepaidWash(t, store, "XYZ789", testPrepaidWashID, testNow)
+
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID))
+
+		if got := prepaidWashOf(t, store, "XYZ789"); got != "" {
+			t.Errorf("prepaid wash = %q, want none left", got)
+		}
+	})
+
+	t.Run("a spend pulled from another site hides it", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID))
+
+		applyChanges(t, store, spentChange(7, "XYZ789", testPrepaidWashID))
+
+		if got := prepaidWashOf(t, store, "XYZ789"); got != "" {
+			t.Errorf("prepaid wash = %q, want none left", got)
+		}
+	})
+
+	t.Run("the oldest unspent prepaid wash is spent first", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "XYZ789", "cs_test_first"), grantedChange(7, "XYZ789", "cs_test_second"))
+
+		spendPrepaidWash(t, store, "XYZ789", prepaidWashOf(t, store, "XYZ789"), testNow)
+
+		if got := prepaidWashOf(t, store, "XYZ789"); got != "cs_test_second" {
+			t.Errorf("prepaid wash = %q, want cs_test_second left", got)
+		}
+	})
+
+	t.Run("a prepaid wash does not count toward the Premium cap", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "ABC123", testPrepaidWashID))
+
+		spendPrepaidWash(t, store, "ABC123", testPrepaidWashID, testNow)
+
+		if got := washesCountedTowardTheCap(t, store, "ABC123"); got != 0 {
+			t.Errorf("washes counted = %d, want 0", got)
+		}
+	})
+
+	t.Run("a spent prepaid wash waits in the outbox with its id", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID))
+
+		wash := spendPrepaidWash(t, store, "XYZ789", testPrepaidWashID, testNow)
+
+		pending, err := store.PendingWashes(t.Context(), maxPushBatch)
+		if err != nil {
+			t.Fatalf("read pending washes: %v", err)
+		}
+		want := PendingWash{ID: wash.ID, Plate: "XYZ789", Plan: PlanPrepaid, PrepaidWashID: testPrepaidWashID, AdmittedAt: testNow}
+		if len(pending) != 1 || pending[0] != want {
+			t.Errorf("pending = %+v, want [%+v]", pending, want)
+		}
+	})
+
+	t.Run("a change of a kind the site does not know refuses the page", func(t *testing.T) {
+		store := openSeededStore(t)
+		unknown := EntitlementChange{Seq: 6, Plate: "XYZ789", Kind: "prepaid_refunded", PrepaidWashID: testPrepaidWashID}
+
+		err := store.ApplyChanges(t.Context(), []EntitlementChange{unknown}, 6, testNow)
+
+		if err == nil {
+			t.Error("apply changes: nil error, want the page refused")
+		}
+	})
+}
+
+func TestSchemaPrepaidMigrationKeepsTheLedgerAndTheOutbox(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "site.db")
+	first, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := first.ApplyChanges(t.Context(), testEntitlements(), 5, testNow); err != nil {
+		t.Fatalf("apply changes: %v", err)
+	}
+	wash, _ := recordWash(t, first, "ABC123", testNow)
+	down, err := schemaFiles.ReadFile("schema/004_prepaid.down.sql")
+	if err != nil {
+		t.Fatalf("read down migration: %v", err)
+	}
+	if _, err := first.db.ExecContext(t.Context(), string(down)+"PRAGMA user_version = 3;"); err != nil {
+		t.Fatalf("roll back to schema 3: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	second, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+
+	if got := pendingIDs(t, second); len(got) != 1 || got[0] != wash.ID {
+		t.Errorf("pending = %v, want [%s] kept across the rebuild", got, wash.ID)
+	}
 }

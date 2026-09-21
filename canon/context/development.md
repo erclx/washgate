@@ -34,7 +34,7 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 - `core/migrations/` holds numbered `.up.sql` and `.down.sql` pairs. `scripts/migrate.sh` applies each unrecorded `.up.sql` in name order and records it in `schema_migrations`.
 - `docker compose run --rm migrate down` rolls back the latest recorded migration.
 - Connection settings are the `DB_*` variables in `.env.example`. The compose files fall back to the same defaults when a variable is unset.
-- MariaDB commits DDL implicitly, so a migration failing halfway leaves a partial schema. Keep one statement per file or use `IF NOT EXISTS`.
+- MariaDB commits DDL implicitly, so a migration failing halfway leaves a partial schema. Keep one statement per file or use `IF NOT EXISTS`. A check constraint takes it before its name, `ADD CONSTRAINT IF NOT EXISTS <name> CHECK (...)`, and a foreign key takes it after the keyword, `ADD CONSTRAINT <name> FOREIGN KEY IF NOT EXISTS (...)`. The check's spelling is a syntax error on a foreign key.
 - Data lives in the `mariadb-data` volume and the site agent's `site-data` volume. `docker compose down -v` is the one command that drops them.
 
 ### Central
@@ -45,13 +45,15 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 - The central MariaDB tests in `core/` read `CENTRAL_TEST_DSN` and skip when it is unset, so `bun run test:run` stays green without compose. To run them, bring up compose's MariaDB and point the variable at a user that can create databases, such as root: `CENTRAL_TEST_DSN='root:washgate-root@tcp(127.0.0.1:3306)/'`. The compose `washgate` user cannot create databases.
 - Parallel worktree sessions each start their own throwaway MariaDB for these tests rather than sharing compose's 3306: `docker run -d --name washgate-<topic>-test -e MARIADB_ROOT_PASSWORD=washgate-root -p 127.0.0.1:<free port>:3306 mariadb:11.8`, with `CENTRAL_TEST_DSN` pointed at that port.
 - `core/internal/testdb` gives each test its own database with every migration applied and drops it afterwards.
-- Central's Stripe routes, `POST /checkout` and `POST /stripe/webhook`, answer 503 until `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are both set, so the stack starts with no Stripe account. Central exits on a key that is not `sk_test_` or `rk_test_`. `docker compose --profile stripe up` adds the `stripe-cli` forwarder.
+- Central's Stripe routes, `POST /checkout`, `POST /checkout/single-wash`, and `POST /stripe/webhook`, answer 503 until `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are both set, so the stack starts with no Stripe account. Central exits on a key that is not `sk_test_` or `rk_test_`. `docker compose --profile stripe up` adds the `stripe-cli` forwarder.
+- `POST /checkout/single-wash` answers 503 on a fresh database until a `single_wash` row is in force in `prices`, the same gap `premium` has, since nothing seeds either.
 
 ### Site agent
 
 - The `site-agent` service runs `site-1` on `SITE_PORT` (default 8081). It has no `depends_on` central, since a site starting before central is the offline case. Every `SITE_SYNC_INTERVAL` (default `5s`) it pushes its outbox to central and pulls entitlement changes into its SQLite copy, which lives in the `site-data` volume at `/data/site.db`. Once the last good pull is older than `SITE_MAX_OFFLINE` (default `10m`), or before the first one, an unknown plate goes to staff instead of to payment.
 - Cut the site's link with `docker compose stop central`. The site keeps deciding, admitted washes wait in its outbox, and `docker compose start central` lets the next sync push them. The site logs only when the link goes down or comes back up.
 - `GET /status` on the site agent answers `site_id`, `outbox_depth`, and `last_synced_at`, the time of the last good pull, so a backlog shows while central is out of reach.
+- The site applies `core/internal/siteagent/schema/` by `PRAGMA user_version`, each file in one transaction at startup. SQLite cannot alter a check, so a change to one rebuilds the table. `outbox` references `washes`, so a `washes` rebuild copies the outbox rows to a temp table, empties `outbox`, drops and renames `washes`, then copies the rows back. With foreign keys on, `DROP TABLE washes` otherwise fails on the outbox rows, and `PRAGMA foreign_keys` cannot change inside the migration's transaction.
 
 ### washctl
 

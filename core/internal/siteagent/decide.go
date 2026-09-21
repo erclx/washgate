@@ -12,6 +12,8 @@ type Plan string
 const (
 	PlanPremium Plan = "premium"
 	PlanFleet   Plan = "fleet"
+	// PlanPrepaid is never held by a vehicle. It marks a wash admitted on a prepaid wash.
+	PlanPrepaid Plan = "prepaid"
 )
 
 // Outcome is what the lane does with the car.
@@ -35,6 +37,7 @@ const (
 	ReasonFleet          Reason = "fleet"
 	ReasonWithinCap      Reason = "within_cap"
 	ReasonCapReached     Reason = "cap_reached"
+	ReasonPrepaidWash    Reason = "prepaid_wash"
 	ReasonUnknownPlate   Reason = "unknown_plate"
 	// ReasonUnknownPlateOffline sends an unknown plate to staff because the copy is too old to say it holds no subscription.
 	ReasonUnknownPlateOffline Reason = "unknown_plate_offline"
@@ -65,6 +68,8 @@ type Facts struct {
 	LastWash        Wash
 	// LastPulledAt is when the copy last pulled from central, zero if it never has.
 	LastPulledAt time.Time
+	// PrepaidWashID is the plate's oldest unspent prepaid wash, empty if it holds none.
+	PrepaidWashID string
 }
 
 // Policy holds the site's tunable decision thresholds.
@@ -94,20 +99,25 @@ func Decide(read Read, facts Facts, policy Policy, now time.Time) Decision {
 	if isInsideWindow(facts.LastWash, policy.DedupWindow, now) {
 		return Decision{Outcome: OutcomeAdmit, Reason: ReasonDuplicateRead, WashID: facts.LastWash.ID}
 	}
-	switch facts.Entitlement.Plan {
-	case PlanFleet:
+	isPremium := facts.Entitlement.Plan == PlanPremium
+	if facts.Entitlement.Plan == PlanFleet {
 		return Decision{Outcome: OutcomeAdmit, Reason: ReasonFleet}
-	case PlanPremium:
-		if facts.WashesThisMonth < PremiumMonthlyCap {
-			return Decision{Outcome: OutcomeAdmit, Reason: ReasonWithinCap}
-		}
-		return Decision{Outcome: OutcomePay, Reason: ReasonCapReached}
-	default:
-		if isStale(facts.LastPulledAt, policy.MaxOffline, now) {
-			return Decision{Outcome: OutcomeStaff, Reason: ReasonUnknownPlateOffline}
-		}
-		return Decision{Outcome: OutcomePay, Reason: ReasonUnknownPlate}
 	}
+	if isPremium && facts.WashesThisMonth < PremiumMonthlyCap {
+		return Decision{Outcome: OutcomeAdmit, Reason: ReasonWithinCap}
+	}
+	// Included washes go first, so a paid wash is never spent on a car the plan admits anyway,
+	// and a driver who paid is admitted even when the copy is too old to vouch for an unknown plate.
+	if facts.PrepaidWashID != "" {
+		return Decision{Outcome: OutcomeAdmit, Reason: ReasonPrepaidWash}
+	}
+	if isPremium {
+		return Decision{Outcome: OutcomePay, Reason: ReasonCapReached}
+	}
+	if isStale(facts.LastPulledAt, policy.MaxOffline, now) {
+		return Decision{Outcome: OutcomeStaff, Reason: ReasonUnknownPlateOffline}
+	}
+	return Decision{Outcome: OutcomePay, Reason: ReasonUnknownPlate}
 }
 
 // MonthStart returns the first instant of now's calendar month in the site's time zone.

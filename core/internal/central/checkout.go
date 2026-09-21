@@ -43,44 +43,8 @@ type billing struct {
 }
 
 func (b *billing) handlePostCheckout(w http.ResponseWriter, r *http.Request) {
-	if b.payments == nil {
-		http.Error(w, "payments are not configured", http.StatusServiceUnavailable)
-		return
-	}
-	var body checkoutRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCheckoutBodyBytes))
-	if err := decoder.Decode(&body); err != nil || decoder.More() {
-		http.Error(w, rejectedCheckoutReason, http.StatusBadRequest)
-		return
-	}
-	plate := strings.ToUpper(strings.TrimSpace(body.Plate))
-	if !isPresentWithin(body.CustomerID, maxReferenceLength) || !normalizedPlate.MatchString(plate) {
-		http.Error(w, rejectedCheckoutReason, http.StatusBadRequest)
-		return
-	}
-	// Central's own copy of the lane's taxi rule, so a taxi's Premium lands under the key the lane looks up.
-	if match := taxiPlate.FindStringSubmatch(plate); match != nil {
-		plate = match[1]
-	}
-
-	exists, err := b.store.CustomerExists(r.Context(), body.CustomerID)
-	if err != nil {
-		slog.Error("checkout failed", "stage", "read customer", "error", err)
-		http.Error(w, "central could not start checkout", http.StatusInternalServerError)
-		return
-	}
-	if !exists {
-		http.Error(w, "the customer_id names no customer central knows", http.StatusUnprocessableEntity)
-		return
-	}
-	held, err := b.store.IsPlateHeldByAnother(r.Context(), plate, body.CustomerID)
-	if err != nil {
-		slog.Error("checkout failed", "stage", "read plate holder", "error", err)
-		http.Error(w, "central could not start checkout", http.StatusInternalServerError)
-		return
-	}
-	if held {
-		http.Error(w, "this plate is registered to another owner", http.StatusConflict)
+	body, isAccepted := b.acceptCheckout(w, r, http.StatusConflict)
+	if !isAccepted {
 		return
 	}
 	amountOre, err := b.store.PremiumPrice(r.Context(), time.Now())
@@ -95,13 +59,90 @@ func (b *billing) handlePostCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := b.payments.Client.CreateCheckoutSession(r.Context(), stripe.CheckoutRequest{
+	session, err := b.payments.Client.CreateCheckoutSession(r.Context(), b.checkoutRequest(body, amountOre))
+	b.answerCheckout(w, session, err)
+}
+
+// handlePostSingleWashCheckout opens a one-off payment for one wash. A plate held by a company or by another
+// customer answers 422 rather than 409, since a fleet car is admitted already and billed on the invoice.
+func (b *billing) handlePostSingleWashCheckout(w http.ResponseWriter, r *http.Request) {
+	body, isAccepted := b.acceptCheckout(w, r, http.StatusUnprocessableEntity)
+	if !isAccepted {
+		return
+	}
+	amountOre, err := b.store.SingleWashPrice(r.Context(), time.Now())
+	if errors.Is(err, ErrNoSingleWashPrice) {
+		slog.Warn("checkout refused", "reason", "no single wash price is valid")
+		http.Error(w, "a single wash has no price yet", http.StatusServiceUnavailable)
+		return
+	}
+	if err != nil {
+		slog.Error("checkout failed", "stage", "read price", "error", err)
+		http.Error(w, "central could not start checkout", http.StatusInternalServerError)
+		return
+	}
+
+	session, err := b.payments.Client.CreateSingleWashSession(r.Context(), b.checkoutRequest(body, amountOre))
+	b.answerCheckout(w, session, err)
+}
+
+// acceptCheckout decodes and checks a checkout body, answering the request itself and reporting false when
+// it refuses. A plate registered to anyone but the buyer answers heldStatus.
+func (b *billing) acceptCheckout(w http.ResponseWriter, r *http.Request, heldStatus int) (checkoutRequest, bool) {
+	if b.payments == nil {
+		http.Error(w, "payments are not configured", http.StatusServiceUnavailable)
+		return checkoutRequest{}, false
+	}
+	var body checkoutRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCheckoutBodyBytes))
+	if err := decoder.Decode(&body); err != nil || decoder.More() {
+		http.Error(w, rejectedCheckoutReason, http.StatusBadRequest)
+		return checkoutRequest{}, false
+	}
+	body.Plate = strings.ToUpper(strings.TrimSpace(body.Plate))
+	if !isPresentWithin(body.CustomerID, maxReferenceLength) || !normalizedPlate.MatchString(body.Plate) {
+		http.Error(w, rejectedCheckoutReason, http.StatusBadRequest)
+		return checkoutRequest{}, false
+	}
+	// Central's own copy of the lane's taxi rule, so a taxi's purchase lands under the key the lane looks up.
+	if match := taxiPlate.FindStringSubmatch(body.Plate); match != nil {
+		body.Plate = match[1]
+	}
+
+	exists, err := b.store.CustomerExists(r.Context(), body.CustomerID)
+	if err != nil {
+		slog.Error("checkout failed", "stage", "read customer", "error", err)
+		http.Error(w, "central could not start checkout", http.StatusInternalServerError)
+		return checkoutRequest{}, false
+	}
+	if !exists {
+		http.Error(w, "the customer_id names no customer central knows", http.StatusUnprocessableEntity)
+		return checkoutRequest{}, false
+	}
+	held, err := b.store.IsPlateHeldByAnother(r.Context(), body.Plate, body.CustomerID)
+	if err != nil {
+		slog.Error("checkout failed", "stage", "read plate holder", "error", err)
+		http.Error(w, "central could not start checkout", http.StatusInternalServerError)
+		return checkoutRequest{}, false
+	}
+	if held {
+		http.Error(w, "this plate is registered to another owner", heldStatus)
+		return checkoutRequest{}, false
+	}
+	return body, true
+}
+
+func (b *billing) checkoutRequest(body checkoutRequest, amountOre int64) stripe.CheckoutRequest {
+	return stripe.CheckoutRequest{
 		CustomerID: body.CustomerID,
-		Plate:      plate,
+		Plate:      body.Plate,
 		AmountOre:  amountOre,
 		SuccessURL: b.payments.SuccessURL,
 		CancelURL:  b.payments.CancelURL,
-	})
+	}
+}
+
+func (b *billing) answerCheckout(w http.ResponseWriter, session stripe.CheckoutSession, err error) {
 	if err != nil {
 		slog.Error("checkout failed", "stage", "create stripe session", "error", err)
 		http.Error(w, "the payment provider could not start checkout", http.StatusBadGateway)
