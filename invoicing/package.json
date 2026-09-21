@@ -1,0 +1,11 @@
+{
+  "name": "invoicing",
+  "private": true,
+  "scripts": {
+    "lint": "vendor/bin/php-cs-fixer check --diff",
+    "lint:fix": "vendor/bin/php-cs-fixer fix",
+    "typecheck": "vendor/bin/phpstan analyse --no-progress",
+    "test": "vendor/bin/phpunit",
+    "test:run": "vendor/bin/phpunit --testdox"
+  }
+}

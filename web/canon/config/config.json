@@ -1,0 +1,10 @@
+{
+  "covers": ["tooling"],
+  "domains": {
+    "tooling": {
+      "syncedAt": "2026-09-21T07:44:06.429Z",
+      "files": {},
+      "chain": ["vite-react", "web"]
+    }
+  }
+}

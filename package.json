@@ -1,0 +1,20 @@
+{
+  "name": "washgate",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "cspell": "^10.3.3",
+    "husky": "^9.1.7",
+    "prettier": "^3.9.8"
+  },
+  "scripts": {
+    "check:spell": "cspell '**' '.*/**' '.*' --no-progress --color --show-context",
+    "check:format": "prettier --check --log-level warn --ignore-path .gitignore --ignore-path .prettierignore . && find scripts -name '*.sh' -exec shfmt --diff --indent 2 {} +",
+    "check:shell": "find scripts -name '*.sh' -exec shellcheck --severity=warning {} +",
+    "format": "prettier --write --log-level warn --ignore-path .gitignore --ignore-path .prettierignore . && find scripts -name '*.sh' -exec shfmt --write --indent 2 {} +",
+    "prepare": "husky",
+    "check": "./scripts/verify.sh"
+  }
+}

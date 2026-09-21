@@ -1,0 +1,10 @@
+{
+  "covers": ["tooling"],
+  "domains": {
+    "tooling": {
+      "syncedAt": "2026-09-21T07:46:50.141Z",
+      "files": {},
+      "chain": ["python"]
+    }
+  }
+}
