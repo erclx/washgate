@@ -21,7 +21,7 @@ Scaffolded, not yet working end to end. Each component builds and passes its che
 
 ## Setup
 
-You need [Bun](https://bun.sh), [Go](https://go.dev/dl/), PHP 8.3 with Composer, and [uv](https://docs.astral.sh/uv/).
+You need [Docker](https://docs.docker.com/get-docker/), [Bun](https://bun.sh), [Go](https://go.dev/dl/), PHP 8.3 with Composer, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 bun install
@@ -33,11 +33,10 @@ go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
 ## Usage
 
-Start the central API and check it:
+Start MariaDB, apply the migrations, and run the central API, then check it:
 
 ```bash
-cd core
-go run ./cmd/central
+docker compose up --build
 curl localhost:8080/health
 ```
 

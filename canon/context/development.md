@@ -23,6 +23,15 @@ Owns how the project runs on a developer machine: installing the toolchain, the 
 - Install [uv](https://docs.astral.sh/uv/) for the plate reader
 - Install dependencies: `bun install` at the root and in `web/`, `composer install` in `invoicing/`, `uv sync` in `plate-reader/`
 
+## Running the stack
+
+- `docker compose up --build` starts MariaDB, runs the `migrate` step, then starts central once the step exits cleanly. Use `--build` so a changed central image is never served from a stale layer.
+- `core/migrations/` holds numbered `.up.sql` and `.down.sql` pairs. `scripts/migrate.sh` applies each unrecorded `.up.sql` in name order and records it in `schema_migrations`.
+- `docker compose run --rm migrate down` rolls back the latest recorded migration.
+- Connection settings are the `DB_*` variables in `.env.example`. The compose file falls back to the same defaults when a variable is unset.
+- MariaDB commits DDL implicitly, so a migration failing halfway leaves a partial schema. Keep one statement per file or use `IF NOT EXISTS`.
+- Data lives in the `mariadb-data` volume. `docker compose down -v` is the one command that drops it.
+
 ## Scripts
 
 | Command          | Purpose                                                                        |
