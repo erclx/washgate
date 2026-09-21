@@ -4,6 +4,11 @@ A car pulls up to the wash hall. Is it allowed in, what does it cost, and does t
 
 washgate answers that for a staffed car wash chain: a camera photo becomes a plate, the site decides admit, deny, or ask staff, and every wash lands in the ledger once, even when the camera fires twice, the payment provider retries, or the site loses its link to head office. It's a working model of the problem, built to show how the backend stays correct when conditions are bad.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="web/assets/evidence/readme/dark.png">
+  <img src="web/assets/evidence/readme/light.png" alt="The lane dashboard from a recorded run: a Premium car's plate read, the Admit decision with its reason, and the backend trace behind it">
+</picture>
+
 ## How it works
 
 - **Plate reader** (Python): a pretrained model turns a lane photo into plate text and a confidence score.

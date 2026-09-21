@@ -27,13 +27,13 @@
         "id": "dec-0001",
         "decided_at": "2026-09-21T12:29:00.500Z",
         "plate": "EEK828",
-        "confidence": 0.96,
+        "confidence": 0.99996,
         "outcome": "admit",
         "reason": "within_cap",
         "wash_id": "wash-0001",
         "wash_number": 3,
         "company_name": null,
-        "cutoff": 0.8,
+        "cutoff": 0.99,
         "has_photo": true,
         "trace": [
           {
@@ -87,13 +87,13 @@
         "id": "dec-0002",
         "decided_at": "2026-09-21T12:29:05.000Z",
         "plate": "EEK828",
-        "confidence": 0.95,
+        "confidence": 0.9998,
         "outcome": "admit",
         "reason": "duplicate_read",
         "wash_id": "wash-0001",
         "wash_number": 3,
         "company_name": null,
-        "cutoff": 0.8,
+        "cutoff": 0.99,
         "has_photo": false,
         "trace": [
           {
@@ -127,13 +127,13 @@
         "id": "dec-0003",
         "decided_at": "2026-09-21T12:29:09.000Z",
         "plate": "KTR55T",
-        "confidence": 0.93,
+        "confidence": 0.9991,
         "outcome": "pay",
         "reason": "unknown_plate",
         "wash_id": null,
         "wash_number": null,
         "company_name": null,
-        "cutoff": 0.8,
+        "cutoff": 0.99,
         "has_photo": false,
         "trace": [
           {
@@ -173,7 +173,7 @@
         "wash_id": null,
         "wash_number": null,
         "company_name": null,
-        "cutoff": 0.8,
+        "cutoff": 0.99,
         "has_photo": false,
         "trace": [
           {
@@ -213,7 +213,7 @@
         "wash_id": "wash-0004",
         "wash_number": 2,
         "company_name": null,
-        "cutoff": 0.8,
+        "cutoff": 0.99,
         "has_photo": false,
         "trace": [
           {
@@ -279,13 +279,13 @@
         "id": "dec-0005",
         "decided_at": "2026-09-21T12:29:22.000Z",
         "plate": "NFR210",
-        "confidence": 0.97,
+        "confidence": 0.9995,
         "outcome": "admit",
         "reason": "fleet",
         "wash_id": "wash-0005",
         "wash_number": null,
         "company_name": "Nordfrakt AB",
-        "cutoff": 0.8,
+        "cutoff": 0.99,
         "has_photo": false,
         "trace": [
           {
@@ -331,13 +331,13 @@
         "id": "dec-0006",
         "decided_at": "2026-09-21T12:29:26.000Z",
         "plate": "DEF456",
-        "confidence": 0.94,
+        "confidence": 0.9993,
         "outcome": "admit",
         "reason": "within_cap",
         "wash_id": "wash-0006",
         "wash_number": 7,
         "company_name": null,
-        "cutoff": 0.8,
+        "cutoff": 0.99,
         "has_photo": false,
         "trace": [
           {
