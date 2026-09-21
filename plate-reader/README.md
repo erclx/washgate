@@ -9,7 +9,13 @@ uv sync
 uv run uvicorn --factory plate_reader.app:create_default_app --port 8000
 ```
 
-The first read downloads the model weights, so it needs network once.
+The first read downloads the model weights, so it needs network once. The Docker image downloads them at build instead, so a container reads with the network down.
+
+```bash
+docker compose up --build plate-reader
+```
+
+The service listens on `127.0.0.1:${PLATE_READER_PORT:-8000}` and sends each read to `http://site-agent:8081/reads`.
 
 | Variable         | Default | Meaning                                                                                                                   |
 | ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -25,7 +31,7 @@ curl -H 'Content-Type: image/jpeg' --data-binary @lane.jpg http://localhost:8000
 
 ## Response and send-on
 
-The response and the send-on body are the same JSON:
+The response is this JSON:
 
 ```json
 {
@@ -34,6 +40,8 @@ The response and the send-on body are the same JSON:
   "box": { "x1": 412, "y1": 388, "x2": 560, "y2": 430 }
 }
 ```
+
+The send-on body is the same JSON plus `photo`, the image as a base64 string. The photo goes to the site agent only. It is never in the response, written to disk, or logged.
 
 `confidence` is the OCR confidence for the plate with the highest detection confidence in the photo, averaged over characters. The reader returns it raw and never decides admit, pay, or staff. That cutoff belongs to the site.
 

@@ -58,7 +58,7 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 
 ### Plate reader
 
-- Not built yet. Its service goes in `plate-reader/compose.yaml`, which holds no services yet.
+- The `plate-reader` service builds from `plate-reader/`, downloads its model weights at image build, and listens on `127.0.0.1:${PLATE_READER_PORT:-8000}`. Drive one read with `curl -H 'Content-Type: image/jpeg' --data-binary @lane.jpg http://localhost:8000/read`. It sends each read and its photo on to `http://site-agent:8081/reads` and still answers when that service is absent. The site agent refuses the photo until the lane feed lands, which the reader logs.
 
 ### Dashboard
 
