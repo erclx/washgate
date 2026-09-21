@@ -1,13 +1,18 @@
 [project]
 name = "plate-reader"
 version = "0.1.0"
-description = "Add your description here"
+description = "Turns a lane photo into plate text, a confidence score, and a bounding box"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "fast-alpr[onnx]>=0.4.0",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.53.0",
+]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
