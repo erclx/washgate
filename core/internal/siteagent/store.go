@@ -38,13 +38,15 @@ type PendingWash struct {
 	AdmittedAt time.Time
 }
 
-// EntitlementChange is one entry of central's change log. A zero Plan revokes the plate.
+// EntitlementChange is one entry of central's change log. A zero Plan revokes the plate, and a
+// non-zero QuotaResetAt makes the monthly cap count from that instant.
 type EntitlementChange struct {
-	Seq         int64
-	Plate       string
-	Plan        Plan
-	CompanyID   string
-	CompanyName string
+	Seq          int64
+	Plate        string
+	Plan         Plan
+	CompanyID    string
+	CompanyName  string
+	QuotaResetAt time.Time
 }
 
 // Open opens the SQLite file at path and brings its schema up to date.
@@ -133,7 +135,8 @@ func (s *Store) applyMigration(ctx context.Context, migration schemaMigration) e
 	return nil
 }
 
-// Facts reads a plate's entitlement, its washes since monthStart, its most recent wash, and when the copy last pulled.
+// Facts reads a plate's entitlement, its washes since the later of monthStart and its latest quota reset,
+// its most recent wash, and when the copy last pulled.
 func (s *Store) Facts(ctx context.Context, plate string, monthStart time.Time) (Facts, error) {
 	var facts Facts
 	var companyID sql.NullString
@@ -146,7 +149,9 @@ func (s *Store) Facts(ctx context.Context, plate string, monthStart time.Time) (
 	facts.Entitlement.CompanyID = companyID.String
 
 	err = s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM washes WHERE plate = ? AND admitted_at >= ?", plate, formatTime(monthStart),
+		`SELECT COUNT(*) FROM washes WHERE plate = ?
+		AND admitted_at >= MAX(?, COALESCE((SELECT reset_at FROM quota_resets WHERE plate = ?), ''))`,
+		plate, formatTime(monthStart), plate,
 	).Scan(&facts.WashesThisMonth)
 	if err != nil {
 		return Facts{}, fmt.Errorf("count washes this month: %w", err)
@@ -158,17 +163,27 @@ func (s *Store) Facts(ctx context.Context, plate string, monthStart time.Time) (
 	}
 	facts.LastWash = lastWash
 
-	var lastPulledAt sql.NullString
-	if err := s.db.QueryRowContext(ctx, "SELECT last_pulled_at FROM sync_state WHERE id = 1").Scan(&lastPulledAt); err != nil {
-		return Facts{}, fmt.Errorf("read last pull time: %w", err)
-	}
-	if lastPulledAt.Valid {
-		facts.LastPulledAt, err = time.Parse(timeLayout, lastPulledAt.String)
-		if err != nil {
-			return Facts{}, fmt.Errorf("parse last pull time: %w", err)
-		}
+	facts.LastPulledAt, err = s.LastPulledAt(ctx)
+	if err != nil {
+		return Facts{}, err
 	}
 	return facts, nil
+}
+
+// LastPulledAt is when the copy last pulled from central, zero if it never has.
+func (s *Store) LastPulledAt(ctx context.Context) (time.Time, error) {
+	var lastPulledAt sql.NullString
+	if err := s.db.QueryRowContext(ctx, "SELECT last_pulled_at FROM sync_state WHERE id = 1").Scan(&lastPulledAt); err != nil {
+		return time.Time{}, fmt.Errorf("read last pull time: %w", err)
+	}
+	if !lastPulledAt.Valid {
+		return time.Time{}, nil
+	}
+	pulledAt, err := time.Parse(timeLayout, lastPulledAt.String)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse last pull time: %w", err)
+	}
+	return pulledAt, nil
 }
 
 // RecordWash writes an admitted wash and its outbox entry, unless one for the plate already sits
@@ -300,6 +315,16 @@ func (s *Store) ApplyChanges(ctx context.Context, changes []EntitlementChange, n
 }
 
 func applyChange(ctx context.Context, tx *sql.Tx, change EntitlementChange) error {
+	if !change.QuotaResetAt.IsZero() {
+		// A reset only ever moves forward, so a change replayed out of order cannot undo a later one.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO quota_resets (plate, reset_at) VALUES (?, ?)
+			ON CONFLICT (plate) DO UPDATE SET reset_at = MAX(reset_at, excluded.reset_at)`,
+			change.Plate, formatTime(change.QuotaResetAt),
+		); err != nil {
+			return fmt.Errorf("write quota reset: %w", err)
+		}
+	}
 	if change.Plan == "" {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM vehicles WHERE plate = ?", change.Plate); err != nil {
 			return fmt.Errorf("revoke vehicle: %w", err)
