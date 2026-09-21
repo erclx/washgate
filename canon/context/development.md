@@ -13,7 +13,8 @@ Owns how the project runs on a developer machine: installing the toolchain, the 
 
 - `scripts/` owns the shell scripts the package scripts below call
 - `.husky/` owns the git hooks
-- `core/`, `invoicing/`, `plate-reader/`, and `web/` each carry their own `package.json` with the same verify script names
+- `core/`, `invoicing/`, `plate-reader/`, and `web/` each carry their own `package.json` with the same verify script names, and their own `compose.yaml` holding that component's services
+- `docker-compose.yml` at the root pulls the four component files in with `include:` and keeps `mariadb`, `migrate`, and the `mariadb-data` volume, which no component owns
 
 ## Setup
 
@@ -25,22 +26,43 @@ Owns how the project runs on a developer machine: installing the toolchain, the 
 
 ## Running the stack
 
+A branch writes only its own component's entries: its `compose.yaml`, its section of `.env.example`, its bullet in the README's Status, and its subsection below. Only a change to the database or the migrate step edits the root `docker-compose.yml` or the Stack subsection. Compose 2.20 or newer is needed for `include:`. A relative path in a component's `compose.yaml` resolves against that file's folder, and a variable read by two components, such as `DB_*` or `SITE_TOKEN`, keeps its own `${VAR:-default}` in each.
+
+### Stack
+
 - `docker compose up --build` starts MariaDB, runs the `migrate` step, then starts central once the step exits cleanly. Use `--build` so a changed central image is never served from a stale layer.
 - `core/migrations/` holds numbered `.up.sql` and `.down.sql` pairs. `scripts/migrate.sh` applies each unrecorded `.up.sql` in name order and records it in `schema_migrations`.
 - `docker compose run --rm migrate down` rolls back the latest recorded migration.
-- Connection settings are the `DB_*` variables in `.env.example`. The compose file falls back to the same defaults when a variable is unset.
+- Connection settings are the `DB_*` variables in `.env.example`. The compose files fall back to the same defaults when a variable is unset.
 - MariaDB commits DDL implicitly, so a migration failing halfway leaves a partial schema. Keep one statement per file or use `IF NOT EXISTS`.
+- Data lives in the `mariadb-data` volume and the site agent's `site-data` volume. `docker compose down -v` is the one command that drops them.
+
+### Central
+
 - Central registers each site named in `CENTRAL_SITE_TOKENS` at startup, as comma-separated `site-id=token` pairs with each token at least 32 characters, and exits on a malformed value. The variable is the whole set: a site left out keeps its row but loses its token, so an empty or unset value revokes every site. Compose sets `site-1` from `SITE_TOKEN`, whose default in `.env.example` is a local development value rather than a secret.
 - `POST /washes` and `GET /entitlements` answer 401 without a site's token, so a manual request to either sends `Authorization: Bearer <token>`. `GET /health` stays open.
-- The `site-agent` service runs `site-1` on `SITE_PORT` (default 8081). It has no `depends_on` central, since a site starting before central is the offline case. Every `SITE_SYNC_INTERVAL` (default `5s`) it pushes its outbox to central and pulls entitlement changes into its SQLite copy, which lives in the `site-data` volume at `/data/site.db`. Once the last good pull is older than `SITE_MAX_OFFLINE` (default `10m`), or before the first one, an unknown plate goes to staff instead of to payment.
-- Cut the site's link with `docker compose stop central`. The site keeps deciding, admitted washes wait in its outbox, and `docker compose start central` lets the next sync push them. The site logs only when the link goes down or comes back up.
-- Data lives in the `mariadb-data` and `site-data` volumes. `docker compose down -v` is the one command that drops them.
 - The central MariaDB tests in `core/` read `CENTRAL_TEST_DSN` and skip when it is unset, so `bun run test:run` stays green without compose. To run them, bring up compose's MariaDB and point the variable at a user that can create databases, such as root: `CENTRAL_TEST_DSN='root:washgate-root@tcp(127.0.0.1:3306)/'`. The compose `washgate` user cannot create databases.
 - Parallel worktree sessions each start their own throwaway MariaDB for these tests rather than sharing compose's 3306: `docker run -d --name washgate-<topic>-test -e MARIADB_ROOT_PASSWORD=washgate-root -p 127.0.0.1:<free port>:3306 mariadb:11.8`, with `CENTRAL_TEST_DSN` pointed at that port.
 - `core/internal/testdb` gives each test its own database with every migration applied and drops it afterwards.
 - Central's Stripe routes, `POST /checkout` and `POST /stripe/webhook`, answer 503 until `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are both set, so the stack starts with no Stripe account. Central exits on a key that is not `sk_test_` or `rk_test_`. `docker compose --profile stripe up` adds the `stripe-cli` forwarder.
+
+### Site agent
+
+- The `site-agent` service runs `site-1` on `SITE_PORT` (default 8081). It has no `depends_on` central, since a site starting before central is the offline case. Every `SITE_SYNC_INTERVAL` (default `5s`) it pushes its outbox to central and pulls entitlement changes into its SQLite copy, which lives in the `site-data` volume at `/data/site.db`. Once the last good pull is older than `SITE_MAX_OFFLINE` (default `10m`), or before the first one, an unknown plate goes to staff instead of to payment.
+- Cut the site's link with `docker compose stop central`. The site keeps deciding, admitted washes wait in its outbox, and `docker compose start central` lets the next sync push them. The site logs only when the link goes down or comes back up.
+
+### Invoicing
+
 - The invoicing MariaDB tests read `INVOICING_TEST_DSN`, `INVOICING_TEST_USER`, and `INVOICING_TEST_PASSWORD` and skip when the DSN is unset. Copy the three from `.env.example`. `invoicing/tests/Database/TemporaryDatabase.php` applies `core/migrations/*.up.sql` to a per-test database, so a schema change in Go reaches the PHP tests.
 - The `invoicing` compose service serves `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` adding the leasing company column, on `127.0.0.1:${INVOICING_PORT:-8082}`. It answers 422 while no `fleet_wash` price is in force for a fleet wash.
+
+### Plate reader
+
+- Not built yet. Its service goes in `plate-reader/compose.yaml`, which holds no services yet.
+
+### Dashboard
+
+- Not built yet. Its service goes in `web/compose.yaml`, which holds no services yet.
 
 ## Scripts
 
