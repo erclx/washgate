@@ -114,8 +114,11 @@ export function LaneDashboard() {
         onSearch={(plate) => void search(plate)}
       />
       {kind === 'replay' && (
-        <p className="bg-accent px-lg py-xs text-label text-surface">
-          Replay of a recorded run
+        <p className="flex flex-wrap justify-between gap-x-lg bg-accent px-lg py-xs text-label text-surface">
+          <span>Replay of a recorded run</span>
+          <a href="/photo-attribution.md" className="underline">
+            Photo: nakhon100, CC BY 2.0
+          </a>
         </p>
       )}
       <SiteLane

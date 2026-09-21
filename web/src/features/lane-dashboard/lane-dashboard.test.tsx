@@ -161,4 +161,21 @@ describe('LaneDashboard', () => {
 
     expect(screen.getByText('Replay of a recorded run')).toBeInTheDocument()
   })
+
+  it('credits the replay photo with a link to its attribution', () => {
+    const stub = buildStubSource()
+    renderDashboard({ ...stub, source: { ...stub.source, kind: 'replay' } })
+
+    expect(
+      screen.getByRole('link', { name: 'Photo: nakhon100, CC BY 2.0' }),
+    ).toHaveAttribute('href', '/photo-attribution.md')
+  })
+
+  it('shows no photo credit outside a replay build', () => {
+    renderDashboard(buildStubSource())
+
+    expect(
+      screen.queryByRole('link', { name: 'Photo: nakhon100, CC BY 2.0' }),
+    ).not.toBeInTheDocument()
+  })
 })
