@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,13 +23,19 @@ const (
 	maxAnswerBodySize = 1 << 20
 )
 
-// SyncConfig holds where central is, who this site is to it, and the clock that stamps each pull.
+// errLinkCut is a tick the syncer skipped because a reviewer cut the link.
+var errLinkCut = errors.New("the link to central is cut")
+
+// SyncConfig holds where central is, who this site is to it, the clock that stamps each pull,
+// the lane feed told of each acknowledged wash, and the switch that cuts the link.
 type SyncConfig struct {
 	CentralURL string
 	SiteID     string
 	Token      string
 	Client     *http.Client
 	Now        func() time.Time
+	Feed       *Feed
+	Link       *LinkSwitch
 }
 
 // Syncer pushes the outbox to central and pulls central's entitlement changes into the copy.
@@ -78,21 +85,23 @@ type pullChange struct {
 }
 
 // Run syncs once at start and then every interval until ctx ends, logging only when the link
-// to central goes up or down rather than on every failed tick.
+// to central goes up or down rather than on every failed tick. A tick while the link is cut sends nothing.
 func (s *Syncer) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	var wasOnline *bool
 	for {
-		err := s.SyncOnce(ctx)
+		err := s.tick(ctx)
 		if ctx.Err() != nil {
 			return
 		}
-		isOnline := err == nil
-		if wasOnline == nil || *wasOnline != isOnline {
-			s.logLinkChange(ctx, err)
+		if !errors.Is(err, errLinkCut) {
+			isOnline := err == nil
+			if wasOnline == nil || *wasOnline != isOnline {
+				s.logLinkChange(ctx, err)
+			}
+			wasOnline = &isOnline
 		}
-		wasOnline = &isOnline
 		select {
 		case <-ctx.Done():
 			return
@@ -112,6 +121,17 @@ func (s *Syncer) logLinkChange(ctx context.Context, err error) {
 		return
 	}
 	slog.Info("central link up", "site_id", s.config.SiteID, "cursor", cursor)
+}
+
+// tick syncs once unless the link is cut, recording the attempt for the site status.
+func (s *Syncer) tick(ctx context.Context) error {
+	if s.config.Link.IsCut() {
+		return errLinkCut
+	}
+	s.config.Link.beginSync()
+	err := s.SyncOnce(ctx)
+	s.config.Link.endSync(err)
+	return err
 }
 
 // SyncOnce pushes the outbox until it is empty, then pulls changes until a page comes back short.
@@ -143,6 +163,7 @@ func (s *Syncer) push(ctx context.Context) error {
 		if err := s.store.ClearOutbox(ctx, acknowledged); err != nil {
 			return err
 		}
+		s.config.Feed.MarkSynced(acknowledged)
 		slog.Info("washes pushed", "site_id", s.config.SiteID, "batch_size", len(pending),
 			"stored", len(answer.Stored), "duplicates", len(answer.Duplicates))
 		if len(acknowledged) < len(pending) {

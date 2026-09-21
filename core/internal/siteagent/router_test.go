@@ -1,9 +1,14 @@
 package siteagent
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +23,11 @@ type readAnswer struct {
 
 func newTestRouter(t *testing.T, store *Store, now time.Time) http.Handler {
 	t.Helper()
+	return newFeedRouter(t, store, now, NewFeed(), &LinkSwitch{})
+}
+
+func newFeedRouter(t *testing.T, store *Store, now time.Time, feed *Feed, link *LinkSwitch) http.Handler {
+	t.Helper()
 	stockholm, err := time.LoadLocation("Europe/Stockholm")
 	if err != nil {
 		t.Fatalf("load location: %v", err)
@@ -27,6 +37,8 @@ func newTestRouter(t *testing.T, store *Store, now time.Time) http.Handler {
 		Policy:   testPolicy(),
 		Location: stockholm,
 		Now:      func() time.Time { return now },
+		Feed:     feed,
+		Link:     link,
 	})
 }
 
@@ -241,27 +253,6 @@ func TestHealthReportsOK(t *testing.T) {
 	}
 }
 
-type statusAnswer struct {
-	SiteID       string     `json:"site_id"`
-	OutboxDepth  int        `json:"outbox_depth"`
-	LastSyncedAt *time.Time `json:"last_synced_at"`
-}
-
-func getStatus(t *testing.T, router http.Handler) statusAnswer {
-	t.Helper()
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/status", nil)
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d, body %q", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	var answer statusAnswer
-	if err := json.NewDecoder(recorder.Body).Decode(&answer); err != nil {
-		t.Fatalf("decode answer: %v", err)
-	}
-	return answer
-}
-
 func TestReadsAdmitsACappedPlateAgainAfterAReset(t *testing.T) {
 	store := openSeededStore(t)
 	recordFullMonth(t, store, "ABC123", MonthStart(testNow, time.UTC).Add(time.Hour))
@@ -310,24 +301,160 @@ func TestReadsSpendsAPrepaidWashOnce(t *testing.T) {
 	})
 }
 
-func TestStatus(t *testing.T) {
-	t.Run("reports the site, its outbox depth, and its last pull", func(t *testing.T) {
-		store := openSeededStore(t)
-		recordWash(t, store, "ABC123", testNow)
-		recordWash(t, store, "KLM456", testNow)
+func readWithPhoto(photo string) string {
+	return fmt.Sprintf(`{"plate": "ABC123", "confidence": 1, "photo": %q}`, photo)
+}
 
-		got := getStatus(t, newTestRouter(t, store, testNow))
+func getPhoto(t *testing.T, router http.Handler, decisionID string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/lane/photos/"+decisionID, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
 
-		if got.SiteID != testSiteID || got.OutboxDepth != 2 || got.LastSyncedAt == nil || !got.LastSyncedAt.Equal(testNow) {
-			t.Errorf("status = %+v, want %s with depth 2 pulled at %v", got, testSiteID, testNow)
+func decisionIDOf(t *testing.T, recorder *httptest.ResponseRecorder) string {
+	t.Helper()
+	var answer struct {
+		DecisionID string `json:"decision_id"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&answer); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	if answer.DecisionID == "" {
+		t.Fatal("answer carries no decision id")
+	}
+	return answer.DecisionID
+}
+
+func TestReadsHoldsTheLanePhoto(t *testing.T) {
+	t.Run("a read with a photo is decided and its photo served", func(t *testing.T) {
+		router := newTestRouter(t, openSeededStore(t), testNow)
+		answer := postRead(t, router, "application/json", readWithPhoto(base64.StdEncoding.EncodeToString(testPhoto)))
+		if answer.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d, body %q", answer.Code, http.StatusOK, answer.Body.String())
+		}
+
+		photo := getPhoto(t, router, decisionIDOf(t, answer))
+
+		if photo.Code != http.StatusOK || photo.Header().Get("Content-Type") != "image/jpeg" || !bytes.Equal(photo.Body.Bytes(), testPhoto) {
+			t.Errorf("photo answer = %d %q with %d bytes, want the posted JPEG", photo.Code, photo.Header().Get("Content-Type"), photo.Body.Len())
 		}
 	})
 
-	t.Run("a copy never pulled reports no sync time", func(t *testing.T) {
-		got := getStatus(t, newTestRouter(t, openStore(t), testNow))
+	t.Run("a photo nobody holds answers 404", func(t *testing.T) {
+		got := getPhoto(t, newTestRouter(t, openSeededStore(t), testNow), "dec-unknown")
 
-		if got.OutboxDepth != 0 || got.LastSyncedAt != nil {
-			t.Errorf("status = %+v, want an empty outbox and no sync time", got)
+		if got.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want %d", got.Code, http.StatusNotFound)
 		}
 	})
+
+	t.Run("a photo that is not base64 answers 400", func(t *testing.T) {
+		got := postRead(t, newTestRouter(t, openSeededStore(t), testNow), "application/json", readWithPhoto("not base64!"))
+
+		if got.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d", got.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("a body past the cap answers 413", func(t *testing.T) {
+		oversized := strings.Repeat("A", maxReadBodyBytes)
+
+		got := postRead(t, newTestRouter(t, openSeededStore(t), testNow), "application/json", readWithPhoto(oversized))
+
+		if got.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("status = %d, want %d", got.Code, http.StatusRequestEntityTooLarge)
+		}
+	})
+}
+
+// nextEvent reads one server-sent event from stream.
+func nextEvent(t *testing.T, stream *bufio.Reader) (string, string) {
+	t.Helper()
+	var name, data string
+	for {
+		line, err := stream.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read event stream: %v", err)
+		}
+		line = strings.TrimSuffix(line, "\n")
+		switch {
+		case line == "" && name != "":
+			return name, data
+		case strings.HasPrefix(line, "event: "):
+			name = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			data = strings.TrimPrefix(line, "data: ")
+		}
+	}
+}
+
+func openEventStream(t *testing.T, server *httptest.Server) *bufio.Reader {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/lane/events", nil)
+	if err != nil {
+		t.Fatalf("build stream request: %v", err)
+	}
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("open event stream: %v", err)
+	}
+	t.Cleanup(func() { _ = response.Body.Close() })
+	if got := response.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("content type = %q, want text/event-stream", got)
+	}
+	return bufio.NewReader(response.Body)
+}
+
+func traceStatuses(trace []TraceStep) []TraceStatus {
+	statuses := make([]TraceStatus, 0, len(trace))
+	for _, step := range trace {
+		statuses = append(statuses, step.Status)
+	}
+	return statuses
+}
+
+func TestLaneEventsStreamsADecisionPostedAfterItConnects(t *testing.T) {
+	feed := NewFeed()
+	router := newFeedRouter(t, openSeededStore(t), testNow, feed, &LinkSwitch{})
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+	t.Cleanup(feed.Close)
+	stream := openEventStream(t, server)
+
+	answer := postRead(t, router, "application/json", `{"plate": "KLM456", "confidence": 1}`)
+	name, data := nextEvent(t, stream)
+
+	var decision LaneDecision
+	if err := json.Unmarshal([]byte(data), &decision); err != nil {
+		t.Fatalf("decode event: %v", err)
+	}
+	if name != "decision" || decision.ID != decisionIDOf(t, answer) {
+		t.Fatalf("event = %s %+v, want the posted decision", name, decision)
+	}
+	if decision.Outcome != OutcomeAdmit || decision.Reason != ReasonFleet || decision.CompanyName == nil || *decision.CompanyName != "Nordfrakt AB" {
+		t.Errorf("decision = %+v, want a fleet admit billed to Nordfrakt AB", decision)
+	}
+	wantTrace := []TraceStatus{TraceDone, TraceDone, TraceDone, TraceQueued}
+	if gotTrace := traceStatuses(decision.Trace); !slices.Equal(gotTrace, wantTrace) {
+		t.Errorf("trace = %v, want %v", gotTrace, wantTrace)
+	}
+}
+
+func TestReadsPublishesAPremiumAdmitWithItsWashNumber(t *testing.T) {
+	store := openSeededStore(t)
+	recordWash(t, store, "ABC123", testNow.Add(-time.Hour))
+	feed := NewFeed()
+	events := feed.Subscribe(t.Context())
+
+	decodeAnswer(t, postRead(t, newFeedRouter(t, store, testNow, feed, &LinkSwitch{}), "application/json", `{"plate": "ABC123", "confidence": 1}`))
+
+	got := drain(events)
+	if len(got) != 1 {
+		t.Fatalf("events = %+v, want one decision", got)
+	}
+	if decision := got[0].Body.(LaneDecision); decision.WashNumber == nil || *decision.WashNumber != 2 || decision.WashID == nil {
+		t.Errorf("decision = %+v, want wash 2 with a wash id", decision)
+	}
 }

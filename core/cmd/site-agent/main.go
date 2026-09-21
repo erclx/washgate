@@ -69,12 +69,15 @@ func run(ctx context.Context) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	feed, link := siteagent.NewFeed(), &siteagent.LinkSwitch{}
 	syncer := siteagent.NewSyncer(store, siteagent.SyncConfig{
 		CentralURL: centralURL,
 		SiteID:     siteID,
 		Token:      token,
 		Client:     &http.Client{Timeout: centralTimeout},
 		Now:        time.Now,
+		Feed:       feed,
+		Link:       link,
 	})
 	var syncing sync.WaitGroup
 	syncing.Go(func() { syncer.Run(ctx, syncInterval) })
@@ -87,9 +90,13 @@ func run(ctx context.Context) error {
 			Policy:   siteagent.Policy{MinConfidence: minConfidence, DedupWindow: dedupWindow, MaxOffline: maxOffline},
 			Location: location,
 			Now:      time.Now,
+			Feed:     feed,
+			Link:     link,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	// The lane feed streams hold their connections open, so shutdown ends them rather than waiting them out.
+	server.RegisterOnShutdown(feed.Close)
 	serving := make(chan error, 1)
 	go func() { serving <- server.ListenAndServe() }()
 	slog.Info("site-agent listening", "address", address, "site_id", siteID, "sync_interval", syncInterval.String())
