@@ -1,4 +1,4 @@
-import { expect, type Request,test } from '@playwright/test'
+import { expect, type Request, test } from '@playwright/test'
 
 const staticResourceTypes = new Set([
   'document',
