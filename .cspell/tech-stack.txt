@@ -70,3 +70,8 @@ wireframe
 wireframes
 worktree
 worktrees
+distroless
+nonroot
+healthcheck
+innodb
+VARCHAR

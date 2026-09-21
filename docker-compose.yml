@@ -1,0 +1,55 @@
+services:
+  mariadb:
+    image: mariadb:11.8
+    environment:
+      MARIADB_DATABASE: ${DB_NAME:-washgate}
+      MARIADB_USER: ${DB_USER:-washgate}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-washgate}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-washgate-root}
+    ports:
+      - '127.0.0.1:${MARIADB_PORT:-3306}:3306'
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: mariadb:11.8
+    entrypoint: ['bash', '/scripts/migrate.sh']
+    command: ['up']
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-washgate}
+      DB_USER: ${DB_USER:-washgate}
+      DB_PASSWORD: ${DB_PASSWORD:-washgate}
+    volumes:
+      - ./core/migrations:/migrations:ro
+      - ./scripts/migrate.sh:/scripts/migrate.sh:ro
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    restart: 'no'
+
+  central:
+    build:
+      context: ./core
+      args:
+        CMD: central
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-washgate}
+      DB_USER: ${DB_USER:-washgate}
+      DB_PASSWORD: ${DB_PASSWORD:-washgate}
+    ports:
+      - '8080:8080'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  mariadb-data:
