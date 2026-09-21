@@ -1,0 +1,510 @@
+{
+  "version": 1,
+  "sites": [
+    {
+      "id": "site-1",
+      "name": "Site 1"
+    }
+  ],
+  "events": [
+    {
+      "at_ms": 0,
+      "site_id": "site-1",
+      "type": "status",
+      "body": {
+        "site_id": "site-1",
+        "link": "online",
+        "outbox_depth": 0,
+        "last_synced_at": "2026-09-21T12:28:58.000Z",
+        "is_syncing": false
+      }
+    },
+    {
+      "at_ms": 500,
+      "site_id": "site-1",
+      "type": "decision",
+      "body": {
+        "id": "dec-0001",
+        "decided_at": "2026-09-21T12:29:00.500Z",
+        "plate": "EEK828",
+        "confidence": 0.96,
+        "outcome": "admit",
+        "reason": "within_cap",
+        "wash_id": "wash-0001",
+        "wash_number": 3,
+        "company_name": null,
+        "cutoff": 0.8,
+        "has_photo": true,
+        "trace": [
+          {
+            "step": "entitlement_lookup",
+            "status": "done",
+            "duration_ms": 2
+          },
+          {
+            "step": "ledger_write",
+            "status": "done",
+            "duration_ms": 4
+          },
+          {
+            "step": "outbox_entry",
+            "status": "done",
+            "duration_ms": 1
+          },
+          {
+            "step": "sync_to_hq",
+            "status": "queued",
+            "duration_ms": 0
+          }
+        ]
+      }
+    },
+    {
+      "at_ms": 2000,
+      "site_id": "site-1",
+      "type": "synced",
+      "body": {
+        "wash_ids": ["wash-0001"]
+      }
+    },
+    {
+      "at_ms": 2000,
+      "site_id": "site-1",
+      "type": "status",
+      "body": {
+        "site_id": "site-1",
+        "link": "online",
+        "outbox_depth": 0,
+        "last_synced_at": "2026-09-21T12:29:02.000Z",
+        "is_syncing": false
+      }
+    },
+    {
+      "at_ms": 5000,
+      "site_id": "site-1",
+      "type": "decision",
+      "body": {
+        "id": "dec-0002",
+        "decided_at": "2026-09-21T12:29:05.000Z",
+        "plate": "EEK828",
+        "confidence": 0.95,
+        "outcome": "admit",
+        "reason": "duplicate_read",
+        "wash_id": "wash-0001",
+        "wash_number": 3,
+        "company_name": null,
+        "cutoff": 0.8,
+        "has_photo": false,
+        "trace": [
+          {
+            "step": "entitlement_lookup",
+            "status": "done",
+            "duration_ms": 2
+          },
+          {
+            "step": "ledger_write",
+            "status": "skipped",
+            "duration_ms": 0
+          },
+          {
+            "step": "outbox_entry",
+            "status": "skipped",
+            "duration_ms": 0
+          },
+          {
+            "step": "sync_to_hq",
+            "status": "skipped",
+            "duration_ms": 0
+          }
+        ]
+      }
+    },
+    {
+      "at_ms": 9000,
+      "site_id": "site-1",
+      "type": "decision",
+      "body": {
+        "id": "dec-0003",
+        "decided_at": "2026-09-21T12:29:09.000Z",
+        "plate": "KTR55T",
+        "confidence": 0.93,
+        "outcome": "pay",
+        "reason": "unknown_plate",
+        "wash_id": null,
+        "wash_number": null,
+        "company_name": null,
+        "cutoff": 0.8,
+        "has_photo": false,
+        "trace": [
+          {
+            "step": "entitlement_lookup",
+            "status": "done",
+            "duration_ms": 2
+          },
+          {
+            "step": "ledger_write",
+            "status": "skipped",
+            "duration_ms": 0
+          },
+          {
+            "step": "outbox_entry",
+            "status": "skipped",
+            "duration_ms": 0
+          },
+          {
+            "step": "sync_to_hq",
+            "status": "skipped",
+            "duration_ms": 0
+          }
+        ]
+      }
+    },
+    {
+      "at_ms": 13000,
+      "site_id": "site-1",
+      "type": "decision",
+      "body": {
+        "id": "dec-0004",
+        "decided_at": "2026-09-21T12:29:13.000Z",
+        "plate": "MLB48Z",
+        "confidence": 0.52,
+        "outcome": "staff",
+        "reason": "low_confidence",
+        "wash_id": null,
+        "wash_number": null,
+        "company_name": null,
+        "cutoff": 0.8,
+        "has_photo": false,
+        "trace": [
+          {
+            "step": "entitlement_lookup",
+            "status": "skipped",
+            "duration_ms": 0
+          },
+          {
+            "step": "ledger_write",
+            "status": "skipped",
+            "duration_ms": 0
+          },
+          {
+            "step": "outbox_entry",
+            "status": "skipped",
+            "duration_ms": 0
+          },
+          {
+            "step": "sync_to_hq",
+            "status": "skipped",
+            "duration_ms": 0
+          }
+        ]
+      }
+    },
+    {
+      "at_ms": 16000,
+      "site_id": "site-1",
+      "type": "resolved",
+      "body": {
+        "id": "dec-0004",
+        "decided_at": "2026-09-21T12:29:16.000Z",
+        "plate": "MLB482",
+        "confidence": 1,
+        "outcome": "admit",
+        "reason": "confirmed_by_staff",
+        "wash_id": "wash-0004",
+        "wash_number": 2,
+        "company_name": null,
+        "cutoff": 0.8,
+        "has_photo": false,
+        "trace": [
+          {
+            "step": "entitlement_lookup",
+            "status": "done",
+            "duration_ms": 2
+          },
+          {
+            "step": "ledger_write",
+            "status": "done",
+            "duration_ms": 4
+          },
+          {
+            "step": "outbox_entry",
+            "status": "done",
+            "duration_ms": 1
+          },
+          {
+            "step": "sync_to_hq",
+            "status": "queued",
+            "duration_ms": 0
+          }
+        ]
+      }
+    },
+    {
+      "at_ms": 17500,
+      "site_id": "site-1",
+      "type": "synced",
+      "body": {
+        "wash_ids": ["wash-0004"]
+      }
+    },
+    {
+      "at_ms": 17500,
+      "site_id": "site-1",
+      "type": "status",
+      "body": {
+        "site_id": "site-1",
+        "link": "online",
+        "outbox_depth": 0,
+        "last_synced_at": "2026-09-21T12:29:17.500Z",
+        "is_syncing": false
+      }
+    },
+    {
+      "at_ms": 20000,
+      "site_id": "site-1",
+      "type": "status",
+      "body": {
+        "site_id": "site-1",
+        "link": "cut",
+        "outbox_depth": 0,
+        "last_synced_at": "2026-09-21T12:29:17.500Z",
+        "is_syncing": false
+      }
+    },
+    {
+      "at_ms": 22000,
+      "site_id": "site-1",
+      "type": "decision",
+      "body": {
+        "id": "dec-0005",
+        "decided_at": "2026-09-21T12:29:22.000Z",
+        "plate": "NFR210",
+        "confidence": 0.97,
+        "outcome": "admit",
+        "reason": "fleet",
+        "wash_id": "wash-0005",
+        "wash_number": null,
+        "company_name": "Nordfrakt AB",
+        "cutoff": 0.8,
+        "has_photo": false,
+        "trace": [
+          {
+            "step": "entitlement_lookup",
+            "status": "done",
+            "duration_ms": 2
+          },
+          {
+            "step": "ledger_write",
+            "status": "done",
+            "duration_ms": 4
+          },
+          {
+            "step": "outbox_entry",
+            "status": "done",
+            "duration_ms": 1
+          },
+          {
+            "step": "sync_to_hq",
+            "status": "queued",
+            "duration_ms": 0
+          }
+        ]
+      }
+    },
+    {
+      "at_ms": 22000,
+      "site_id": "site-1",
+      "type": "status",
+      "body": {
+        "site_id": "site-1",
+        "link": "cut",
+        "outbox_depth": 1,
+        "last_synced_at": "2026-09-21T12:29:17.500Z",
+        "is_syncing": false
+      }
+    },
+    {
+      "at_ms": 26000,
+      "site_id": "site-1",
+      "type": "decision",
+      "body": {
+        "id": "dec-0006",
+        "decided_at": "2026-09-21T12:29:26.000Z",
+        "plate": "DEF456",
+        "confidence": 0.94,
+        "outcome": "admit",
+        "reason": "within_cap",
+        "wash_id": "wash-0006",
+        "wash_number": 7,
+        "company_name": null,
+        "cutoff": 0.8,
+        "has_photo": false,
+        "trace": [
+          {
+            "step": "entitlement_lookup",
+            "status": "done",
+            "duration_ms": 2
+          },
+          {
+            "step": "ledger_write",
+            "status": "done",
+            "duration_ms": 4
+          },
+          {
+            "step": "outbox_entry",
+            "status": "done",
+            "duration_ms": 1
+          },
+          {
+            "step": "sync_to_hq",
+            "status": "queued",
+            "duration_ms": 0
+          }
+        ]
+      }
+    },
+    {
+      "at_ms": 26000,
+      "site_id": "site-1",
+      "type": "status",
+      "body": {
+        "site_id": "site-1",
+        "link": "cut",
+        "outbox_depth": 2,
+        "last_synced_at": "2026-09-21T12:29:17.500Z",
+        "is_syncing": false
+      }
+    },
+    {
+      "at_ms": 31000,
+      "site_id": "site-1",
+      "type": "status",
+      "body": {
+        "site_id": "site-1",
+        "link": "online",
+        "outbox_depth": 2,
+        "last_synced_at": "2026-09-21T12:29:17.500Z",
+        "is_syncing": true
+      }
+    },
+    {
+      "at_ms": 32500,
+      "site_id": "site-1",
+      "type": "synced",
+      "body": {
+        "wash_ids": ["wash-0005", "wash-0006"]
+      }
+    },
+    {
+      "at_ms": 32500,
+      "site_id": "site-1",
+      "type": "status",
+      "body": {
+        "site_id": "site-1",
+        "link": "online",
+        "outbox_depth": 0,
+        "last_synced_at": "2026-09-21T12:29:32.500Z",
+        "is_syncing": false
+      }
+    }
+  ],
+  "lookups": {
+    "EEK828": {
+      "plate": "EEK828",
+      "owner_type": "customer",
+      "owner_name": "demo@example.com",
+      "subscription": {
+        "plan": "premium",
+        "status": "active"
+      },
+      "washes_this_month": 3,
+      "washes": [
+        {
+          "admitted_at": "2026-09-21T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-14T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-03T08:10:00Z",
+          "site_id": "site-1"
+        }
+      ]
+    },
+    "MLB482": {
+      "plate": "MLB482",
+      "owner_type": "customer",
+      "owner_name": "driver@example.com",
+      "subscription": {
+        "plan": "premium",
+        "status": "active"
+      },
+      "washes_this_month": 2,
+      "washes": [
+        {
+          "admitted_at": "2026-09-21T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-09T08:10:00Z",
+          "site_id": "site-1"
+        }
+      ]
+    },
+    "NFR210": {
+      "plate": "NFR210",
+      "owner_type": "company",
+      "owner_name": "Nordfrakt AB",
+      "subscription": null,
+      "washes_this_month": 1,
+      "washes": [
+        {
+          "admitted_at": "2026-09-21T08:10:00Z",
+          "site_id": "site-1"
+        }
+      ]
+    },
+    "DEF456": {
+      "plate": "DEF456",
+      "owner_type": "customer",
+      "owner_name": "commuter@example.com",
+      "subscription": {
+        "plan": "premium",
+        "status": "active"
+      },
+      "washes_this_month": 7,
+      "washes": [
+        {
+          "admitted_at": "2026-09-21T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-19T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-16T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-12T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-08T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-05T08:10:00Z",
+          "site_id": "site-1"
+        },
+        {
+          "admitted_at": "2026-09-02T08:10:00Z",
+          "site_id": "site-1"
+        }
+      ]
+    }
+  }
+}
