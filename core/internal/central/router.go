@@ -8,8 +8,8 @@ func NewRouter(store *Store) http.Handler {
 	ledger := &ledger{store: store}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
-	mux.HandleFunc("POST /washes", ledger.handlePostWashes)
-	mux.HandleFunc("GET /entitlements", ledger.handleGetEntitlements)
+	mux.Handle("POST /washes", requireSite(store, ledger.handlePostWashes))
+	mux.Handle("GET /entitlements", requireSite(store, ledger.handleGetEntitlements))
 	return mux
 }
 
