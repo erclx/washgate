@@ -1,0 +1,58 @@
+services:
+  central:
+    build:
+      context: .
+      args:
+        CMD: central
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-washgate}
+      DB_USER: ${DB_USER:-washgate}
+      DB_PASSWORD: ${DB_PASSWORD:-washgate}
+      # Local development token, not a secret: the stack binds to 127.0.0.1 only
+      CENTRAL_SITE_TOKENS: site-1=${SITE_TOKEN:-local-dev-site-token-not-a-secret}
+      # Stripe stays off, and its routes answer 503, until the test key and webhook secret are set
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      CHECKOUT_SUCCESS_URL: ${CHECKOUT_SUCCESS_URL:-}
+      CHECKOUT_CANCEL_URL: ${CHECKOUT_CANCEL_URL:-}
+    ports:
+      - '127.0.0.1:${CENTRAL_PORT:-8080}:8080'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Forwards test-mode Stripe events to central. Runs only with `docker compose --profile stripe up`.
+  stripe-cli:
+    image: stripe/stripe-cli:latest
+    profiles: ['stripe']
+    command:
+      [
+        'listen',
+        '--api-key',
+        '${STRIPE_SECRET_KEY:-}',
+        '--forward-to',
+        'central:8080/stripe/webhook',
+      ]
+    depends_on:
+      - central
+
+  # No depends_on central: a site that starts before central is the offline case, and it must keep deciding.
+  site-agent:
+    build:
+      context: .
+      args:
+        CMD: site-agent
+    environment:
+      CENTRAL_URL: http://central:8080
+      SITE_ID: site-1
+      SITE_TOKEN: ${SITE_TOKEN:-local-dev-site-token-not-a-secret}
+      SITE_DB_PATH: /data/site.db
+    ports:
+      - '127.0.0.1:${SITE_PORT:-8081}:8081'
+    volumes:
+      - site-data:/data
+
+volumes:
+  site-data:
