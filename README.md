@@ -17,7 +17,7 @@ Only the camera and the customers are simulated. Every service, database, and ne
 
 ## Status
 
-Scaffolded, not yet working end to end. Each component builds and passes its checks. The central API stores each wash a site sends exactly once and serves the entitlement changes a site pulls, though no site pushes or pulls yet. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
+Scaffolded, not yet working end to end. Each component builds and passes its checks. The central API stores each wash a site sends exactly once and serves the entitlement changes a site pulls, though no site pushes or pulls yet. It also opens a Stripe test-mode Checkout for Premium and applies each Stripe event once, which stays off until a test key is set. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
 
 ## Setup
 
@@ -39,6 +39,8 @@ Start MariaDB, apply the migrations, and run the central API, then check it:
 docker compose up --build
 curl localhost:8080/health
 ```
+
+To take test payments, copy `.env.example` to `.env`, set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` to your Stripe test values, and add the event forwarder with `docker compose --profile stripe up --build`.
 
 Every component folder takes the same commands:
 

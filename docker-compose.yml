@@ -47,11 +47,31 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-washgate}
       # Local development token, not a secret: the stack binds to 127.0.0.1 only
       CENTRAL_SITE_TOKENS: site-1=${SITE_TOKEN:-local-dev-site-token-not-a-secret}
+      # Stripe stays off, and its routes answer 503, until the test key and webhook secret are set
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      CHECKOUT_SUCCESS_URL: ${CHECKOUT_SUCCESS_URL:-}
+      CHECKOUT_CANCEL_URL: ${CHECKOUT_CANCEL_URL:-}
     ports:
       - '127.0.0.1:${CENTRAL_PORT:-8080}:8080'
     depends_on:
       migrate:
         condition: service_completed_successfully
+
+  # Forwards test-mode Stripe events to central. Runs only with `docker compose --profile stripe up`.
+  stripe-cli:
+    image: stripe/stripe-cli:latest
+    profiles: ['stripe']
+    command:
+      [
+        'listen',
+        '--api-key',
+        '${STRIPE_SECRET_KEY:-}',
+        '--forward-to',
+        'central:8080/stripe/webhook',
+      ]
+    depends_on:
+      - central
 
 volumes:
   mariadb-data:
