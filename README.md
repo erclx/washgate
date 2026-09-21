@@ -4,6 +4,11 @@ A car pulls up to the wash hall. Is it allowed in, what does it cost, and does t
 
 washgate answers that for a staffed car wash chain: a camera photo becomes a plate, the site decides admit, deny, or ask staff, and every wash lands in the ledger once, even when the camera fires twice, the payment provider retries, or the site loses its link to head office. It's a working model of the problem, built to show how the backend stays correct when conditions are bad.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="web/assets/evidence/readme/dark.png">
+  <img src="web/assets/evidence/readme/light.png" alt="The lane dashboard from a recorded run: a Premium car's plate read, the Admit decision with its reason, and the backend trace behind it">
+</picture>
+
 ## How it works
 
 - **Plate reader** (Python): a pretrained model turns a lane photo into plate text and a confidence score.
@@ -20,11 +25,11 @@ Only the camera and the customers are simulated. Every service, database, and ne
 Scaffolded, not yet working end to end. Each component builds and passes its checks. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
 
 - **Plate reader**: runs in Compose with its model weights baked into the image, reads a posted photo, and sends the read and the photo on to the site agent.
-- **Site agent**: decides entry from its local copy, pushes each wash to central through an outbox, and pulls entitlement changes back, so it keeps deciding with its link cut and central stores each wash once when the link returns. A plate holding a prepaid wash is admitted on it once the plate's plan has no included wash left. `GET /status` reports its outbox depth and last pull.
+- **Site agent**: decides entry from its local copy, pushes each wash to central through an outbox, and pulls entitlement changes back, so it keeps deciding with its link cut and central stores each wash once when the link returns. A plate holding a prepaid wash is admitted on it once the plate's plan has no included wash left. It streams each decision with its backend trace to the dashboard, holds the current car's photo in memory only, and takes the staff answer. `GET /status` reports its link state, outbox depth, and last pull, and `PUT /site/link` cuts or restores the link to central.
 - **Central**: stores each site wash once and opens a Stripe test-mode Checkout for Premium or a single wash, applying each Stripe event once. A paid single wash becomes one prepaid wash that every site hears of, and the first site to admit the car spends it. Stripe stays off until a test key is set. Operators can look up a plate, reset a Premium plate's monthly quota, which reaches every site on its next pull, and list sites with their last sync. The customer app's routes list demo customers, register a plate to one, and answer each car's plan, washes used against the cap of eight, and reset date. A `seed` step loads three demo customers and the prices checkout and invoicing read.
 - **Invoicing**: serves a month of fleet washes as CSV at `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` grouping by leasing company.
 - **washctl**: looks up a plate, resets a Premium quota, fetches a month's fleet invoice, and shows each site's sync state, by calling central, invoicing, and the site agents over HTTP. `WASHCTL_*` variables say where each answers.
-- **Dashboard**: shows each car's photo, plate read, decision, and backend trace, the staff prompt, site health with a link switch, and a plate lookup. Compose serves it at `localhost:8090`. The lane feed and staff routes it reads on the site agent are not built yet, so the live view has no cars to show. A Replay build plays a recorded run with no backend: `(cd web && bun run build:replay && bun run preview)`.
+- **Dashboard**: shows each car's photo, plate read, decision, and backend trace, the staff prompt, site health with a link switch, and a plate lookup. Compose serves it at `localhost:8090`. A Replay build plays a recorded run with no backend: `(cd web && bun run build:replay && bun run preview)`.
 
 ## Setup
 

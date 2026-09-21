@@ -150,18 +150,21 @@ func (s *Store) applyMigration(ctx context.Context, migration schemaMigration) e
 	return nil
 }
 
-// Facts reads a plate's entitlement, its Premium washes since the later of monthStart and its latest
-// quota reset, its most recent wash, its oldest unspent prepaid wash, and when the copy last pulled.
+// Facts reads a plate's entitlement and its company's name, its Premium washes since the later of monthStart
+// and its latest quota reset, its most recent wash, its oldest unspent prepaid wash, and when the copy last pulled.
 func (s *Store) Facts(ctx context.Context, plate string, monthStart time.Time) (Facts, error) {
 	var facts Facts
-	var companyID sql.NullString
+	var companyID, companyName sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		"SELECT plan, company_id FROM vehicles WHERE plate = ?", plate,
-	).Scan(&facts.Entitlement.Plan, &companyID)
+		`SELECT vehicles.plan, vehicles.company_id, companies.name
+		FROM vehicles LEFT JOIN companies ON companies.id = vehicles.company_id
+		WHERE vehicles.plate = ?`, plate,
+	).Scan(&facts.Entitlement.Plan, &companyID, &companyName)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Facts{}, fmt.Errorf("read entitlement: %w", err)
 	}
 	facts.Entitlement.CompanyID = companyID.String
+	facts.CompanyName = companyName.String
 
 	err = s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM washes WHERE plate = ? AND plan = 'premium'

@@ -75,3 +75,5 @@ Motion only reports change: a new lane decision fades in over 150ms ease-out, an
 ## Iconography
 
 Outline icons from Lucide at a 1.5px stroke, used sparingly beside labels, with no custom icons. Proposed, not yet confirmed.
+
+The washgate mark is a petrol `#0f5c66` tile carrying a stone `#fcfcfb` ripple stroke, with `web/public/favicon.svg` as its source.

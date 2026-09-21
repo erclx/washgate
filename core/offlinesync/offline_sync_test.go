@@ -105,12 +105,15 @@ func openSite(t *testing.T, link *link, siteID, token string) site {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	now := time.Now().UTC()
+	feed, linkSwitch := siteagent.NewFeed(), &siteagent.LinkSwitch{}
 	syncer := siteagent.NewSyncer(store, siteagent.SyncConfig{
 		CentralURL: server.URL,
 		SiteID:     siteID,
 		Token:      token,
 		Client:     &http.Client{Timeout: 5 * time.Second},
 		Now:        func() time.Time { return now },
+		Feed:       feed,
+		Link:       linkSwitch,
 	})
 	if err := syncer.SyncOnce(t.Context()); err != nil {
 		t.Fatalf("first sync: %v", err)
@@ -120,6 +123,8 @@ func openSite(t *testing.T, link *link, siteID, token string) site {
 		Policy:   siteagent.Policy{MinConfidence: 0.99, DedupWindow: 120 * time.Second, MaxOffline: 10 * time.Minute},
 		Location: time.UTC,
 		Now:      func() time.Time { return now },
+		Feed:     feed,
+		Link:     linkSwitch,
 	})
 	return site{store: store, lane: lane, syncer: syncer}
 }

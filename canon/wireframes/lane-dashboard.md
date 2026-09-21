@@ -10,7 +10,7 @@ The lane dashboard shows what one site decided for each car and what the backend
 ## Regions
 
 - Top bar: product name, site picker, plate search, and a link to the customer app, across the full width at the top
-- Replay banner: a full-width strip under the top bar naming the view as a replay, in the Replay build only
+- Replay banner: a full-width strip under the top bar naming the view as a replay and crediting the replay photo with a link to its attribution, in the Replay build only
 - Site health strip: online or offline, outbox depth, last sync, and the cut-link switch, directly under the top bar
 - Current car: the newest decision as a full card, at the top of the lane feed under the health strip
   - Lane photo: the frame the plate was read from, at the card's left
@@ -74,7 +74,7 @@ The Replay build talks to no backend. It plays a recorded run and shows only wha
 ## Copy
 
 - Top bar: `washgate`, `Search a plate`, `Customer app`
-- Replay banner: `Replay of a recorded run`
+- Replay banner: `Replay of a recorded run` and `Photo: nakhon100, CC BY 2.0`
 - Health strip: `Online`, `Offline`, `Syncing`, `Outbox <n>`, `Synced <time> ago`, `Cut link`, `Restore link`, and on a failed switch `The link switch didn't reach the site agent. Try again.`
 - Current car: `Plate read`, `Confidence <score>`, and `No photo held` where the site kept no photo
 - Decisions: `Admit`, `Pay`, `Staff`
@@ -83,6 +83,7 @@ The Replay build talks to no backend. It plays a recorded run and shows only wha
   - fleet: `Fleet car, billed to <company>`
   - duplicate read: `Same car read again, counted once`
   - cap reached: `Premium cap of 8 reached, offer a single wash`
+  - prepaid wash: `Paid single wash`
   - unknown plate: `No subscription, single wash`
   - unknown plate on a site copy past its offline limit: `Not in the site's copy, which is out of date`
   - low confidence: `Read below the <cutoff> cutoff`

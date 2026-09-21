@@ -24,9 +24,9 @@ A site agent decides from its own SQLite copy and writes each wash to a local le
 
 Every input that can arrive twice carries an id the receiver stores in the same transaction as its effect: wash ids from the site, event ids from Stripe, and a dedup window on plate reads at the lane. A retry after any crash changes nothing.
 
-### Docker Compose delivery
+### Docker Compose delivery, and a static replay on Cloudflare
 
-The whole system, MariaDB included, starts with one `docker compose up` on a developer machine. There is no deployed environment.
+The whole system, MariaDB included, starts with one `docker compose up` on a developer machine. That is the live version. The public version is the dashboard built in replay mode, a static bundle that plays a recorded run and calls no service, deployed to Cloudflare Pages on every push to `main`. A car wash backend has no honest hosted form here, and a recording shows what the live system produced without pretending to run it.
 
 ### Per-component tooling behind shared script names
 

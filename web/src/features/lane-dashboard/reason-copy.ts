@@ -16,6 +16,8 @@ export function reasonCopy(decision: LaneDecision): string {
       return 'Same car read again, counted once'
     case 'cap_reached':
       return `Premium cap of ${PREMIUM_MONTHLY_CAP} reached, offer a single wash`
+    case 'prepaid_wash':
+      return 'Paid single wash'
     case 'unknown_plate':
       return 'No subscription, single wash'
     case 'unknown_plate_offline':

@@ -8,6 +8,7 @@ describe('reasonCopy', () => {
   it.each([
     ['duplicate_read', 'Same car read again, counted once'],
     ['cap_reached', 'Premium cap of 8 reached, offer a single wash'],
+    ['prepaid_wash', 'Paid single wash'],
     ['unknown_plate', 'No subscription, single wash'],
     ['unknown_plate_offline', "Not in the site's copy, which is out of date"],
     ['malformed_plate', 'Plate shape not recognized'],

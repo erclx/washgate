@@ -1,0 +1,197 @@
+name: Deploy
+# canon-no-seed: a stack-specific deploy workflow with no root counterpart by design, parameterized per project on sync rather than mirrored from one.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+  # A closed pull request runs only the cleanup job below, which deletes the
+  # preview deployments `canon pr preview` minted for its branch.
+  pull_request:
+    types: [closed]
+
+# A second push
+# while a deploy is in flight publishes the newer commit rather than racing
+# it, and the running job is left to finish so a half-uploaded site is never
+# what a reader lands on. The group is keyed on the ref, since GitHub cancels
+# a pending run when a newer one queues in the same group, and a branch
+# preview must never displace a production deploy waiting behind another.
+concurrency:
+  group: washgate-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+# The deployed page is a recording. `build:replay` compiles the dashboard with
+# the replay data source, so the bundle plays a recorded run and calls no
+# service. The live system stays a local `docker compose up`.
+jobs:
+  web-checks:
+    name: 🌐 Web Checks
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test:run
+
+  build:
+    name: 📦 Replay Build
+    needs: web-checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Dependencies
+        run: cd web && bun install --frozen-lockfile
+
+      # No VITE_BASE_URL, since the site sits at a hostname root.
+      - name: Build
+        run: cd web && bun run build:replay
+
+      # A CC BY photo has to carry its attribution where it is shown, and the
+      # build bundles the photo but not the file naming its author.
+      - name: Publish photo attribution
+        run: cp web/src/data-source/replay/fixtures/photos/ATTRIBUTION.md web/dist/photo-attribution.md
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: web/dist
+          retention-days: 1
+
+  deploy:
+    name: 🚀 Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for Cloudflare secrets
+        id: secrets-check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip notice
+        if: steps.secrets-check.outputs.skip == 'true'
+        run: echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set, skipping deploy. Run the deploy-cloudflare skill to finish setup."
+
+      # This job builds nothing and still needs a toolchain. The checkout
+      # below brings bun.lock, wrangler-action reads it, picks bun on the
+      # strength of it, and installs wrangler with that, so a deploy with no
+      # bun on PATH fails before it reaches Cloudflare. Dropping these steps
+      # as dead weight breaks the deploy on every push.
+      - name: Checkout
+        if: steps.secrets-check.outputs.skip == 'false'
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        if: steps.secrets-check.outputs.skip == 'false'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Download artifact
+        if: steps.secrets-check.outputs.skip == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      # `pages-deployment-alias-url` is an output from wrangler 3.78 on, so the
+      # version is pinned rather than left to the action's default.
+      - name: Publish
+        id: publish
+        if: steps.secrets-check.outputs.skip == 'false'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '3.90.0'
+          command: pages deploy dist --project-name=washgate --branch=${{ github.ref_name }}
+
+      # `canon pr preview` reads this line out of the run log, so the marker is
+      # a contract rather than decoration. The alias is read off the deploy
+      # rather than computed from the branch name, since Cloudflare flattens
+      # and may truncate a branch into its alias.
+      - name: Report preview alias
+        if: steps.publish.outputs.pages-deployment-alias-url != ''
+        env:
+          ALIAS_URL: ${{ steps.publish.outputs.pages-deployment-alias-url }}
+        run: |
+          echo "canon-preview-alias: $ALIAS_URL"
+          echo "Preview: $ALIAS_URL" >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup-preview:
+    name: 🧹 Delete Branch Previews
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # Deployments are listed through the REST API rather than wrangler, whose
+      # listing carries no branch filter. `force=true` is what lets a deployment
+      # still holding its branch alias be deleted. An absent secret skips the
+      # job the way the deploy's own guard does.
+      - name: Delete preview deployments
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT_NAME: washgate
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set, skipping preview cleanup."
+            exit 0
+          fi
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME/deployments"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          page=1
+          ids=""
+          while :; do
+            listing=$(curl -fsS -H "$auth" "$api?env=preview&per_page=25&page=$page")
+            [ "$(echo "$listing" | jq '.result | length')" -eq 0 ] && break
+            ids="$ids $(echo "$listing" | jq -r --arg branch "$BRANCH" '.result[] | select(.deployment_trigger.metadata.branch == $branch) | .id')"
+            page=$((page + 1))
+          done
+          deleted=0
+          for id in $ids; do
+            curl -fsS -X DELETE -H "$auth" "$api/$id?force=true" >/dev/null
+            echo "Deleted $id"
+            deleted=$((deleted + 1))
+          done
+          echo "Deleted $deleted preview deployments for $BRANCH."

@@ -41,6 +41,10 @@ const (
 	ReasonUnknownPlate   Reason = "unknown_plate"
 	// ReasonUnknownPlateOffline sends an unknown plate to staff because the copy is too old to say it holds no subscription.
 	ReasonUnknownPlateOffline Reason = "unknown_plate_offline"
+	// ReasonConfirmedByStaff admits a car whose plate staff typed after the lane sent it to them.
+	ReasonConfirmedByStaff Reason = "confirmed_by_staff"
+	// ReasonSentToPay is staff sending a car to pay without a lookup.
+	ReasonSentToPay Reason = "sent_to_pay_by_staff"
 )
 
 // Read is one plate read from the lane camera.
@@ -63,7 +67,9 @@ type Wash struct {
 
 // Facts is what the store knows about a plate at the moment of a read.
 type Facts struct {
-	Entitlement     Entitlement
+	Entitlement Entitlement
+	// CompanyName names a fleet plate's company, empty for any other plate.
+	CompanyName     string
 	WashesThisMonth int
 	LastWash        Wash
 	// LastPulledAt is when the copy last pulled from central, zero if it never has.
