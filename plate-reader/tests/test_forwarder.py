@@ -1,3 +1,4 @@
+import base64
 import json
 import threading
 from collections.abc import Iterator
@@ -47,23 +48,33 @@ def unused_url() -> Iterator[str]:
     yield url
 
 
+IMAGE = b'jpeg-bytes'
+
+
 class TestHttpForwarder:
     def test_posts_the_read_once_as_json(self) -> None:
         with SiteAgentStub([200]) as stub:
-            HttpForwarder(stub.url, timeout_seconds=1).forward(build_plate_read())
+            HttpForwarder(stub.url, timeout_seconds=1).forward(
+                build_plate_read(), IMAGE
+            )
 
-        assert stub.bodies == [
-            {
-                'plate': 'ABC123',
-                'confidence': 0.98,
-                'box': {'x1': 10, 'y1': 20, 'x2': 110, 'y2': 60},
-            }
-        ]
+        assert len(stub.bodies) == 1
+        assert stub.bodies[0]['plate'] == 'ABC123'
+        assert stub.bodies[0]['confidence'] == 0.98
+        assert stub.bodies[0]['box'] == {'x1': 10, 'y1': 20, 'x2': 110, 'y2': 60}
+
+    def test_posts_the_photo_as_base64_that_decodes_to_the_input(self) -> None:
+        with SiteAgentStub([200]) as stub:
+            HttpForwarder(stub.url, timeout_seconds=1).forward(
+                build_plate_read(), IMAGE
+            )
+
+        assert base64.b64decode(str(stub.bodies[0]['photo'])) == IMAGE
 
     def test_retries_a_server_error_until_it_succeeds(self) -> None:
         with SiteAgentStub([503, 200]) as stub:
             HttpForwarder(stub.url, timeout_seconds=1, backoff_seconds=0).forward(
-                build_plate_read()
+                build_plate_read(), IMAGE
             )
 
         assert len(stub.bodies) == 2
@@ -74,7 +85,7 @@ class TestHttpForwarder:
                 stub.url, timeout_seconds=1, attempts=3, backoff_seconds=0
             )
             with pytest.raises(OSError):
-                forwarder.forward(build_plate_read())
+                forwarder.forward(build_plate_read(), IMAGE)
 
         assert len(stub.bodies) == 3
 
@@ -84,9 +95,9 @@ class TestHttpForwarder:
         )
 
         with pytest.raises(OSError):
-            forwarder.forward(build_plate_read())
+            forwarder.forward(build_plate_read(), IMAGE)
 
 
 class TestNoopForwarder:
     def test_forwards_nothing_without_raising(self) -> None:
-        NoopForwarder().forward(build_plate_read())
+        NoopForwarder().forward(build_plate_read(), IMAGE)

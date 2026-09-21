@@ -25,12 +25,12 @@ class FakeReader:
 
 class RecordingForwarder:
     def __init__(self) -> None:
-        self.forwarded: list[PlateRead] = []
+        self.forwarded: list[tuple[PlateRead, bytes]] = []
 
-    def forward(self, plate_read: PlateRead) -> None:
-        self.forwarded.append(plate_read)
+    def forward(self, plate_read: PlateRead, image_bytes: bytes) -> None:
+        self.forwarded.append((plate_read, image_bytes))
 
 
 class FailingForwarder:
-    def forward(self, plate_read: PlateRead) -> None:
+    def forward(self, plate_read: PlateRead, image_bytes: bytes) -> None:
         raise OSError('site agent down')
