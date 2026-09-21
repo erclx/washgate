@@ -14,7 +14,7 @@ Owns how the project runs on a developer machine: installing the toolchain, the 
 - `scripts/` owns the shell scripts the package scripts below call
 - `.husky/` owns the git hooks
 - `core/`, `invoicing/`, `plate-reader/`, and `web/` each carry their own `package.json` with the same verify script names, and their own `compose.yaml` holding that component's services
-- `docker-compose.yml` at the root pulls the four component files in with `include:` and keeps `mariadb`, `migrate`, and the `mariadb-data` volume, which no component owns
+- `docker-compose.yml` at the root pulls the four component files in with `include:` and keeps `mariadb`, `migrate`, `seed`, and the `mariadb-data` volume, which no component owns
 
 ## Setup
 
