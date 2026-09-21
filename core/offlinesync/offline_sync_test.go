@@ -83,6 +83,19 @@ func newSystem(t *testing.T) *system {
 	}
 
 	link := &link{central: central.NewRouter(centralStore, nil)}
+	site := openSite(t, link, siteID, token)
+	return &system{link: link, database: database, store: site.store, lane: site.lane, syncer: site.syncer}
+}
+
+type site struct {
+	store  *siteagent.Store
+	lane   http.Handler
+	syncer *siteagent.Syncer
+}
+
+// openSite starts a site agent that reaches central through link, and syncs it once.
+func openSite(t *testing.T, link *link, siteID, token string) site {
+	t.Helper()
 	server := httptest.NewServer(link)
 	t.Cleanup(server.Close)
 
@@ -103,11 +116,12 @@ func newSystem(t *testing.T) *system {
 		t.Fatalf("first sync: %v", err)
 	}
 	lane := siteagent.NewRouter(store, siteagent.Config{
+		SiteID:   siteID,
 		Policy:   siteagent.Policy{MinConfidence: 0.99, DedupWindow: 120 * time.Second, MaxOffline: 10 * time.Minute},
 		Location: time.UTC,
 		Now:      func() time.Time { return now },
 	})
-	return &system{link: link, database: database, store: store, lane: lane, syncer: syncer}
+	return site{store: store, lane: lane, syncer: syncer}
 }
 
 func (s *system) admitEveryPlate(t *testing.T) {
