@@ -275,6 +275,41 @@ func TestReadsAdmitsACappedPlateAgainAfterAReset(t *testing.T) {
 	}
 }
 
+func TestReadsSpendsAPrepaidWashOnce(t *testing.T) {
+	t.Run("the first read admits on it and a read after the window is told to pay", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID))
+		body := `{"plate": "XYZ789", "confidence": 1}`
+		first := decodeAnswer(t, postRead(t, newTestRouter(t, store, testNow), "application/json", body))
+
+		second := decodeAnswer(t, postRead(t, newTestRouter(t, store, testNow.Add(2*testWindow)), "application/json", body))
+
+		if first.Decision != "admit" || first.Reason != "prepaid_wash" || first.WashID == "" {
+			t.Errorf("first = %+v, want admit prepaid_wash with a wash id", first)
+		}
+		if want := (readAnswer{Decision: "pay", Reason: "unknown_plate"}); second != want {
+			t.Errorf("second = %+v, want %+v", second, want)
+		}
+	})
+
+	t.Run("a second read inside the window reuses the wash and spends nothing more", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID), grantedChange(7, "XYZ789", "cs_test_second"))
+		router := newTestRouter(t, store, testNow)
+		body := `{"plate": "XYZ789", "confidence": 1}`
+		first := decodeAnswer(t, postRead(t, router, "application/json", body))
+
+		second := decodeAnswer(t, postRead(t, router, "application/json", body))
+
+		if want := (readAnswer{Decision: "admit", Reason: "duplicate_read", WashID: first.WashID}); second != want {
+			t.Errorf("second = %+v, want %+v", second, want)
+		}
+		if got := prepaidWashOf(t, store, "XYZ789"); got != "cs_test_second" {
+			t.Errorf("prepaid wash left = %q, want cs_test_second", got)
+		}
+	})
+}
+
 func TestStatus(t *testing.T) {
 	t.Run("reports the site, its outbox depth, and its last pull", func(t *testing.T) {
 		store := openSeededStore(t)

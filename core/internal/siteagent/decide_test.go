@@ -33,6 +33,11 @@ func withLastWash(facts Facts, id string, age time.Duration) Facts {
 	return facts
 }
 
+func withPrepaidWash(facts Facts, id string) Facts {
+	facts.PrepaidWashID = id
+	return facts
+}
+
 func TestDecideCoversEveryReason(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -129,6 +134,30 @@ func TestDecideCoversEveryReason(t *testing.T) {
 			read:  newRead("ABC123", 1),
 			facts: pulledAgo(premiumFacts(2), time.Hour),
 			want:  Decision{Outcome: OutcomeAdmit, Reason: ReasonWithinCap},
+		},
+		{
+			name:  "unknown plate holding a prepaid wash is admitted on it",
+			read:  newRead("XYZ789", 1),
+			facts: withPrepaidWash(pulledAgo(Facts{}, 0), "cs_test_1"),
+			want:  Decision{Outcome: OutcomeAdmit, Reason: ReasonPrepaidWash},
+		},
+		{
+			name:  "premium plate at the cap holding a prepaid wash is admitted on it",
+			read:  newRead("ABC123", 1),
+			facts: withPrepaidWash(premiumFacts(8), "cs_test_1"),
+			want:  Decision{Outcome: OutcomeAdmit, Reason: ReasonPrepaidWash},
+		},
+		{
+			name:  "premium plate under the cap keeps its prepaid wash",
+			read:  newRead("ABC123", 1),
+			facts: withPrepaidWash(premiumFacts(3), "cs_test_1"),
+			want:  Decision{Outcome: OutcomeAdmit, Reason: ReasonWithinCap},
+		},
+		{
+			name:  "unknown plate holding a prepaid wash on a stale copy is still admitted",
+			read:  newRead("XYZ789", 1),
+			facts: withPrepaidWash(pulledAgo(Facts{}, time.Hour), "cs_test_1"),
+			want:  Decision{Outcome: OutcomeAdmit, Reason: ReasonPrepaidWash},
 		},
 	}
 	for _, tc := range cases {

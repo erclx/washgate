@@ -125,9 +125,16 @@ func (l *lane) decide(ctx context.Context, read Read) (Decision, error) {
 		return decision, nil
 	}
 
-	wash, isDuplicate, err := l.store.RecordWash(ctx, plate, facts.Entitlement, now, l.config.Policy.DedupWindow)
+	entitlement, prepaidWashID := facts.Entitlement, ""
+	if decision.Reason == ReasonPrepaidWash {
+		entitlement, prepaidWashID = Entitlement{Plan: PlanPrepaid}, facts.PrepaidWashID
+	}
+	wash, isDuplicate, err := l.store.RecordWash(ctx, plate, entitlement, prepaidWashID, now, l.config.Policy.DedupWindow)
 	if err != nil {
 		return Decision{}, err
+	}
+	if prepaidWashID != "" && !isDuplicate {
+		slog.Info("prepaid wash spent", "site_id", l.config.SiteID, "prepaid_wash_id", prepaidWashID, "wash_id", wash.ID)
 	}
 	decision.WashID = wash.ID
 	if isDuplicate {

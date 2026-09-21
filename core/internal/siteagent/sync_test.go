@@ -20,11 +20,12 @@ const (
 type pushedBatch struct {
 	SiteID string `json:"site_id"`
 	Washes []struct {
-		ID         string    `json:"id"`
-		Plate      string    `json:"plate"`
-		Plan       Plan      `json:"plan"`
-		CompanyID  string    `json:"company_id"`
-		AdmittedAt time.Time `json:"admitted_at"`
+		ID            string    `json:"id"`
+		Plate         string    `json:"plate"`
+		Plan          Plan      `json:"plan"`
+		CompanyID     string    `json:"company_id"`
+		PrepaidWashID string    `json:"prepaid_wash_id"`
+		AdmittedAt    time.Time `json:"admitted_at"`
 	} `json:"washes"`
 }
 
@@ -107,6 +108,13 @@ func revokeWire(seq int64, plate string) map[string]any {
 	return map[string]any{"seq": seq, "plate": plate, "plan": nil, "company_id": nil, "company_name": nil}
 }
 
+func prepaidWire(seq int64, plate, kind string) map[string]any {
+	return map[string]any{
+		"seq": seq, "plate": plate, "kind": kind, "prepaid_wash_id": testPrepaidWashID,
+		"plan": nil, "company_id": nil, "company_name": nil,
+	}
+}
+
 func newTestSyncer(store *Store, server *httptest.Server, now time.Time) *Syncer {
 	return NewSyncer(store, SyncConfig{
 		CentralURL: server.URL,
@@ -122,7 +130,7 @@ func recordWashes(t *testing.T, store *Store, count int) []string {
 	ids := make([]string, 0, count)
 	for index := range count {
 		admittedAt := testNow.Add(time.Duration(index) * time.Second)
-		wash, _, err := store.RecordWash(t.Context(), fmt.Sprintf("P%05d", index), Entitlement{Plan: PlanPremium}, admittedAt, testWindow)
+		wash, _, err := store.RecordWash(t.Context(), fmt.Sprintf("P%05d", index), Entitlement{Plan: PlanPremium}, "", admittedAt, testWindow)
 		if err != nil {
 			t.Fatalf("record wash: %v", err)
 		}
@@ -147,6 +155,22 @@ func TestSyncOncePush(t *testing.T) {
 		got := central.pushes[0].Washes[0]
 		if got.ID != wash.ID || got.Plate != "KLM456" || got.Plan != PlanFleet || got.CompanyID != "nordfrakt" || !got.AdmittedAt.Equal(testNow) {
 			t.Errorf("pushed wash = %+v, want %s KLM456 fleet nordfrakt at %v", got, wash.ID, testNow)
+		}
+	})
+
+	t.Run("a spent prepaid wash carries its id", func(t *testing.T) {
+		store := openSeededStore(t)
+		applyChanges(t, store, grantedChange(6, "XYZ789", testPrepaidWashID))
+		spendPrepaidWash(t, store, "XYZ789", testPrepaidWashID, testNow)
+		central, server := newFakeCentral(t)
+
+		if err := newTestSyncer(store, server, testNow).SyncOnce(t.Context()); err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+
+		got := central.pushes[0].Washes[0]
+		if got.Plan != PlanPrepaid || got.PrepaidWashID != testPrepaidWashID || got.CompanyID != "" {
+			t.Errorf("pushed wash = %+v, want prepaid %s with no company", got, testPrepaidWashID)
 		}
 	})
 
@@ -253,6 +277,38 @@ func TestSyncOncePull(t *testing.T) {
 
 		if got := washesCountedTowardTheCap(t, store, "ABC123"); got != 0 {
 			t.Errorf("washes counted = %d, want 0", got)
+		}
+	})
+
+	t.Run("a pulled grant then spend of a prepaid wash leaves it spent and the plan untouched", func(t *testing.T) {
+		store := openSeededStore(t)
+		central, server := newFakeCentral(t)
+		central.changes = []map[string]any{prepaidWire(6, "ABC123", "prepaid_granted"), prepaidWire(7, "ABC123", "prepaid_spent")}
+		applyChanges(t, store, grantedChange(5, "ABC123", "cs_test_kept"))
+
+		if err := newTestSyncer(store, server, testNow).SyncOnce(t.Context()); err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+
+		if got := prepaidWashOf(t, store, "ABC123"); got != "cs_test_kept" {
+			t.Errorf("prepaid wash = %q, want only cs_test_kept left", got)
+		}
+		if got := entitlementOf(t, store, "ABC123"); got != (Entitlement{Plan: PlanPremium}) {
+			t.Errorf("entitlement = %+v, want premium kept", got)
+		}
+	})
+
+	t.Run("a change with no kind reads as a plan change", func(t *testing.T) {
+		store := openStore(t)
+		central, server := newFakeCentral(t)
+		central.changes = []map[string]any{premiumWire(1, "ABC123")}
+
+		if err := newTestSyncer(store, server, testNow).SyncOnce(t.Context()); err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+
+		if got := entitlementOf(t, store, "ABC123"); got != (Entitlement{Plan: PlanPremium}) {
+			t.Errorf("entitlement = %+v, want premium", got)
 		}
 	})
 

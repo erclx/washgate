@@ -48,11 +48,12 @@ type pushRequest struct {
 }
 
 type pushWash struct {
-	ID         string    `json:"id"`
-	Plate      string    `json:"plate"`
-	Plan       Plan      `json:"plan"`
-	CompanyID  string    `json:"company_id,omitempty"`
-	AdmittedAt time.Time `json:"admitted_at"`
+	ID            string    `json:"id"`
+	Plate         string    `json:"plate"`
+	Plan          Plan      `json:"plan"`
+	CompanyID     string    `json:"company_id,omitempty"`
+	PrepaidWashID string    `json:"prepaid_wash_id,omitempty"`
+	AdmittedAt    time.Time `json:"admitted_at"`
 }
 
 type pushAnswer struct {
@@ -66,12 +67,14 @@ type pullAnswer struct {
 }
 
 type pullChange struct {
-	Seq          int64      `json:"seq"`
-	Plate        string     `json:"plate"`
-	Plan         *string    `json:"plan"`
-	CompanyID    *string    `json:"company_id"`
-	CompanyName  *string    `json:"company_name"`
-	QuotaResetAt *time.Time `json:"quota_reset_at"`
+	Seq           int64      `json:"seq"`
+	Plate         string     `json:"plate"`
+	Kind          *string    `json:"kind"`
+	Plan          *string    `json:"plan"`
+	CompanyID     *string    `json:"company_id"`
+	CompanyName   *string    `json:"company_name"`
+	QuotaResetAt  *time.Time `json:"quota_reset_at"`
+	PrepaidWashID *string    `json:"prepaid_wash_id"`
 }
 
 // Run syncs once at start and then every interval until ctx ends, logging only when the link
@@ -185,11 +188,13 @@ func (s *Syncer) pull(ctx context.Context) error {
 		changes := make([]EntitlementChange, 0, len(answer.Changes))
 		for _, change := range answer.Changes {
 			entitlementChange := EntitlementChange{
-				Seq:         change.Seq,
-				Plate:       change.Plate,
-				Plan:        Plan(valueOf(change.Plan)),
-				CompanyID:   valueOf(change.CompanyID),
-				CompanyName: valueOf(change.CompanyName),
+				Seq:           change.Seq,
+				Plate:         change.Plate,
+				Kind:          ChangeKind(valueOf(change.Kind)),
+				Plan:          Plan(valueOf(change.Plan)),
+				CompanyID:     valueOf(change.CompanyID),
+				CompanyName:   valueOf(change.CompanyName),
+				PrepaidWashID: valueOf(change.PrepaidWashID),
 			}
 			if change.QuotaResetAt != nil {
 				entitlementChange.QuotaResetAt = *change.QuotaResetAt
