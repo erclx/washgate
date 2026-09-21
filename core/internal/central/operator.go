@@ -5,26 +5,19 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
-	_ "time/tzdata" // embeds the time zone database so a slim image can load the billing zone
 )
 
 const (
-	// billingTimeZone is where a calendar month, and so the monthly cap, begins and ends.
-	billingTimeZone     = "Europe/Stockholm"
 	maxQuotaResetBytes  = 4 << 10
 	maxResetNoteLength  = 255
 	rejectedResetReason = "a quota reset needs an id of 1 to 64 characters and an optional note of up to 255"
 	rejectedPlateReason = "the plate is not in a shape any lane reads"
 )
 
-var plateSeparators = strings.NewReplacer(" ", "", "-", "")
-
 type operator struct {
-	store    *Store
-	location *time.Location
-	now      func() time.Time
+	store *Store
+	month billingMonth
 }
 
 type plateLookupResponse struct {
@@ -72,12 +65,7 @@ type siteResponse struct {
 }
 
 func newOperator(store *Store) *operator {
-	location, err := time.LoadLocation(billingTimeZone)
-	if err != nil {
-		// The zone database is embedded above, so a failure here is a build defect rather than a runtime condition.
-		panic("load billing time zone: " + err.Error())
-	}
-	return &operator{store: store, location: location, now: time.Now}
+	return &operator{store: store, month: newBillingMonth()}
 }
 
 func (o *operator) handleGetPlate(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +74,7 @@ func (o *operator) handleGetPlate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, rejectedPlateReason, http.StatusBadRequest)
 		return
 	}
-	lookup, err := o.store.LookupPlate(r.Context(), plate, o.monthStart())
+	lookup, err := o.store.LookupPlate(r.Context(), plate, o.month.start())
 	if errors.Is(err, ErrUnknownPlate) {
 		http.Error(w, "central holds no vehicle with this plate", http.StatusNotFound)
 		return
@@ -131,7 +119,7 @@ func (o *operator) handlePostQuotaReset(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	reset, isNew, err := o.store.ResetQuota(r.Context(), QuotaReset{ID: body.ID, Plate: plate, ResetAt: o.now(), Note: body.Note})
+	reset, isNew, err := o.store.ResetQuota(r.Context(), QuotaReset{ID: body.ID, Plate: plate, ResetAt: o.month.now(), Note: body.Note})
 	switch {
 	case errors.Is(err, ErrNotSubscribed):
 		http.Error(w, "the plate holds no active subscription to reset", http.StatusNotFound)
@@ -168,24 +156,6 @@ func (o *operator) handleGetSites(w http.ResponseWriter, r *http.Request) {
 		response.Sites = append(response.Sites, siteResponse{ID: site.ID, Name: site.Name, LastSyncedAt: optionalTime(site.LastSyncedAt)})
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-func (o *operator) monthStart() time.Time {
-	local := o.now().In(o.location)
-	return time.Date(local.Year(), local.Month(), 1, 0, 0, 0, 0, o.location)
-}
-
-// canonicalPlate turns a plate an operator typed into the key central stores it under, the way the lane
-// normalizes a read: separators dropped, upper case, and a taxi's trailing T removed.
-func canonicalPlate(raw string) (string, bool) {
-	plate := strings.ToUpper(plateSeparators.Replace(raw))
-	if !normalizedPlate.MatchString(plate) {
-		return "", false
-	}
-	if match := taxiPlate.FindStringSubmatch(plate); match != nil {
-		return match[1], true
-	}
-	return plate, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

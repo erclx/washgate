@@ -120,13 +120,29 @@ func TestPostCheckout(t *testing.T) {
 		}
 	})
 
+	t.Run("a plate typed with a space and a hyphen checks out under the key the lane looks up", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		addPrice(t, database, "premium", 29900, testAdmittedAt.AddDate(-1, 0, 0))
+		server, received := fakeStripe(t, http.StatusOK, `{"id":"cs_test_1","url":"`+testCheckoutURL+`"}`)
+
+		recorder := postCheckout(t, NewRouter(store, newPayments(t, server.URL)), `{"customer_id": "customer-anna", "plate": "abc 12-3"}`)
+
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d, body %q", recorder.Code, http.StatusCreated, recorder.Body.String())
+		}
+		if got := received.Get("subscription_data[metadata][plate]"); got != "ABC123" {
+			t.Fatalf("stripe metadata plate = %q, want %q", got, "ABC123")
+		}
+	})
+
 	cases := []struct {
 		name string
 		body string
 	}{
 		{name: "a body that is not JSON answers 400", body: `customer_id=customer-anna`},
 		{name: "a plate of one character answers 400", body: `{"customer_id": "customer-anna", "plate": "A"}`},
-		{name: "a plate with a space inside answers 400", body: `{"customer_id": "customer-anna", "plate": "ABC 123"}`},
+		{name: "a plate with a character no plate carries answers 400", body: `{"customer_id": "customer-anna", "plate": "ABC.123"}`},
 		{name: "a missing customer id answers 400", body: `{"plate": "ABC123"}`},
 		{name: "a body over 4 KiB answers 400", body: `{"customer_id": "` + strings.Repeat("a", 5000) + `", "plate": "ABC123"}`},
 	}
