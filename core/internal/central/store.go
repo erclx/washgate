@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -18,6 +19,9 @@ const (
 	// mysqlForeignKeyMissing is the server's error number for a row whose foreign key matches no parent.
 	mysqlForeignKeyMissing = 1452
 )
+
+// normalizedPlate is the shape a site's lane looks plates up in once it has normalized a read.
+var normalizedPlate = regexp.MustCompile(`^[A-Z0-9]{2,7}$`)
 
 var (
 	// ErrUnknownSite reports a batch from a site central does not know.
@@ -266,8 +270,12 @@ func (s *Store) EntitlementChanges(ctx context.Context, after int64, limit int) 
 	return changes, nil
 }
 
-// isApplicable mirrors the pairing a site's vehicles table enforces: a fleet plan names a company and nothing else does.
+// isApplicable mirrors what a site can apply: a plate in the normalized form its lane looks up,
+// and the pairing its vehicles table enforces, where a fleet plan names a company and nothing else does.
 func isApplicable(entitlement Entitlement) bool {
+	if !normalizedPlate.MatchString(entitlement.Plate) {
+		return false
+	}
 	hasCompany := entitlement.CompanyID != ""
 	switch entitlement.Plan {
 	case PlanFleet:

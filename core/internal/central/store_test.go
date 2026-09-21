@@ -221,6 +221,21 @@ func TestPutEntitlement(t *testing.T) {
 		}
 	})
 
+	for _, plate := range []string{"abc123", "ABC 123"} {
+		t.Run("rejects the plate "+plate+" that no site would look up", func(t *testing.T) {
+			store, _ := newTestStore(t)
+
+			err := store.PutEntitlement(t.Context(), Entitlement{Plate: plate, Plan: PlanPremium})
+
+			if !errors.Is(err, ErrInvalidEntitlement) {
+				t.Fatalf("error = %v, want ErrInvalidEntitlement", err)
+			}
+			if changes := readChanges(t, store, 0, 10); len(changes) != 0 {
+				t.Fatalf("changes = %+v, want none", changes)
+			}
+		})
+	}
+
 	t.Run("a writer waiting on an uncommitted change cannot commit ahead of it", func(t *testing.T) {
 		store, database := newTestStore(t)
 		earlier, err := database.SQL.BeginTx(t.Context(), nil)
