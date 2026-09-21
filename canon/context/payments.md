@@ -54,7 +54,7 @@ A single wash takes a shorter path:
 - With `STRIPE_SECRET_KEY` or `STRIPE_WEBHOOK_SECRET` unset, central starts with Stripe off and all three routes answer 503. The stack runs with no Stripe account.
 - The `stripe-cli` Compose service forwards test events to `central:8080/stripe/webhook` and runs only under `docker compose --profile stripe up`. It needs the same test key.
 - The event fixtures under `core/internal/central/stripe/` follow the documented shape of the pinned version. They were not captured from a real account, so a real event from the account is the check that they match.
-- Nothing in central seeds a customer, a `premium` price, or a `single_wash` price. No route creates a customer and no migration inserts a `prices` row, so either checkout answers 422 for any customer and 503 for lack of its price until the rows are inserted by hand.
+- No migration inserts a customer or a `prices` row. The compose `seed` service applies `core/seed/demo.sql` for three demo customers and the `premium`, `single_wash`, and `fleet_wash` prices. A database migrated without it, such as a test database, answers 422 at checkout for any customer and 503 for lack of a price.
 - An async payment method can complete a session unpaid and settle later through `checkout.session.async_payment_succeeded`, which central does not handle. Test-mode cards settle at once, so a single wash paid by card always arrives paid.
 - The success and cancel URLs come from `CHECKOUT_SUCCESS_URL` and `CHECKOUT_CANCEL_URL` and default to `http://localhost:5173/`.
 

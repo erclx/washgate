@@ -29,14 +29,13 @@ The rule is deliberately loose. Personalized plates run two to seven letters or 
 ### Where the rule is copied
 
 - `core/internal/siteagent/plate.go` holds the full rule, `NormalizePlate`
-- `core/internal/central/checkout.go` holds the taxi rule again, so a taxi's Premium is sold under the key the lane looks up
+- `core/internal/central/plate.go` holds the full rule again as `canonicalPlate`, for every central route that takes a typed plate
 - `core/internal/central/store.go` holds the shape check again as `normalizedPlate`, so central refuses to store a plate no lane could look up
-- `core/internal/central/operator.go` holds the full rule again as `canonicalPlate`, for the operator routes
 - `plate-reader/src/plate_reader/reader.py` upper-cases and drops spaces only. It drops hyphens and applies the shape check nowhere, so a hyphen reaches the site agent and is removed there
 
 Components cannot share the rule. The reader is Python, and the Go components keep to `internal/<component>/` with no imports between them, so a change to the rule is a change in each copy. The site and central must agree on the shape and on the taxi rule.
 
-Central's routes differ in how much they normalize. The operator routes run `canonicalPlate`, so `ABC 123` reaches the same key the lane uses. Checkout only trims and upper-cases before it applies the taxi rule, so `ABC 123` answers 400 there while the lane would read it as `ABC123`. A caller of checkout sends the normalized form.
+Every central route that takes a typed plate runs `canonicalPlate`: the operator routes, both checkout routes, and the customer routes. `ABC 123` registers, checks out, and looks up under `ABC123`, the key the lane uses. A plate registered by one customer and bought by another is refused at checkout only because both routes normalize alike.
 
 ## Confidence
 

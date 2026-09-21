@@ -5,15 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/erclx/washgate/core/internal/central/stripe"
 )
-
-// taxiPlate matches a taxi's registration followed by the T marking, the same shape the site drops it from.
-var taxiPlate = regexp.MustCompile(`^([A-Z]{3}[0-9]{2}[A-Z0-9])T$`)
 
 const (
 	maxCheckoutBodyBytes   = 4 << 10
@@ -99,15 +94,12 @@ func (b *billing) acceptCheckout(w http.ResponseWriter, r *http.Request, heldSta
 		http.Error(w, rejectedCheckoutReason, http.StatusBadRequest)
 		return checkoutRequest{}, false
 	}
-	body.Plate = strings.ToUpper(strings.TrimSpace(body.Plate))
-	if !isPresentWithin(body.CustomerID, maxReferenceLength) || !normalizedPlate.MatchString(body.Plate) {
+	plate, isWellFormed := canonicalPlate(body.Plate)
+	if !isPresentWithin(body.CustomerID, maxReferenceLength) || !isWellFormed {
 		http.Error(w, rejectedCheckoutReason, http.StatusBadRequest)
 		return checkoutRequest{}, false
 	}
-	// Central's own copy of the lane's taxi rule, so a taxi's purchase lands under the key the lane looks up.
-	if match := taxiPlate.FindStringSubmatch(body.Plate); match != nil {
-		body.Plate = match[1]
-	}
+	body.Plate = plate
 
 	exists, err := b.store.CustomerExists(r.Context(), body.CustomerID)
 	if err != nil {

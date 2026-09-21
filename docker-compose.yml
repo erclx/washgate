@@ -41,5 +41,24 @@ services:
         condition: service_healthy
     restart: 'no'
 
+  # Demo customers and prices for the customer app. Every insert updates a row it finds in place, so each `up` reruns it harmlessly.
+  seed:
+    image: mariadb:11.8
+    entrypoint: ['bash', '-c']
+    command:
+      [
+        'mariadb --host=mariadb --user="$$DB_USER" "$$DB_NAME" < /seed/demo.sql && echo "demo seed applied"',
+      ]
+    environment:
+      DB_NAME: ${DB_NAME:-washgate}
+      DB_USER: ${DB_USER:-washgate}
+      MYSQL_PWD: ${DB_PASSWORD:-washgate}
+    volumes:
+      - ./core/seed/demo.sql:/seed/demo.sql:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: 'no'
+
 volumes:
   mariadb-data:

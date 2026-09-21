@@ -1,7 +1,9 @@
 arlanda
 bitstream
 frakt
+johansson
 kista
+lindqvist
 nakhon
 nord
 nordfrakt
