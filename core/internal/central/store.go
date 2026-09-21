@@ -1,6 +1,7 @@
 package central
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -37,6 +39,10 @@ var (
 	ErrUnknownCustomer = errors.New("unknown customer")
 	// ErrNoPremiumPrice reports that no Premium price is valid yet.
 	ErrNoPremiumPrice = errors.New("no premium price")
+	// ErrNoSingleWashPrice reports that no single wash price is valid yet.
+	ErrNoSingleWashPrice = errors.New("no single wash price")
+	// ErrUnknownPrepaidWash reports a wash spending a prepaid wash central never granted.
+	ErrUnknownPrepaidWash = errors.New("unknown prepaid wash")
 )
 
 // SubscriptionAction is what a payment event does to a subscription.
@@ -71,14 +77,35 @@ type SubscriptionEvent struct {
 	PeriodEnd            time.Time
 }
 
+// PrepaidGrant is a paid single wash as central applies it: the payment event, the Checkout session
+// that identifies the prepaid wash, and who bought it for which plate.
+type PrepaidGrant struct {
+	EventID       string
+	EventType     string
+	PrepaidWashID string
+	CustomerID    string
+	Plate         string
+}
+
 // Plan is what entitles a plate to wash. PlanNone is a revoked or absent entitlement.
 type Plan string
 
-// The plans a plate can hold.
+// The plans a plate can hold. PlanPrepaid is never held, and only marks a wash admitted on a prepaid wash.
 const (
 	PlanNone    Plan = ""
 	PlanPremium Plan = "premium"
 	PlanFleet   Plan = "fleet"
+	PlanPrepaid Plan = "prepaid"
+)
+
+// ChangeKind is what an entry in the change log changes: the plate's plan, or one prepaid wash.
+type ChangeKind string
+
+// The kinds of change sites pull.
+const (
+	ChangeKindPlan           ChangeKind = "plan"
+	ChangeKindPrepaidGranted ChangeKind = "prepaid_granted"
+	ChangeKindPrepaidSpent   ChangeKind = "prepaid_spent"
 )
 
 // Config names the MariaDB database central connects to.
@@ -90,19 +117,22 @@ type Config struct {
 	Password string
 }
 
-// Wash is one admitted wash as a site reports it.
+// Wash is one admitted wash as a site reports it. A prepaid wash names the prepaid wash it spent.
 type Wash struct {
-	ID         string
-	Plate      string
-	Plan       Plan
-	CompanyID  string
-	AdmittedAt time.Time
+	ID            string
+	Plate         string
+	Plan          Plan
+	CompanyID     string
+	PrepaidWashID string
+	AdmittedAt    time.Time
 }
 
-// RecordResult splits a batch's wash ids into those stored now and those already stored.
+// RecordResult splits a batch's wash ids into those stored now and those already stored, and names
+// the prepaid washes the batch spent for the first time.
 type RecordResult struct {
-	Stored     []string
-	Duplicates []string
+	Stored             []string
+	Duplicates         []string
+	SpentPrepaidWashes []string
 }
 
 // Entitlement is the plan a plate holds from now on. A fleet plan names its company, and PlanNone revokes.
@@ -114,14 +144,17 @@ type Entitlement struct {
 }
 
 // EntitlementChange is one entry in the log sites pull their copy from. A non-zero QuotaResetAt tells
-// each site to count the plate's monthly cap from that instant.
+// each site to count the plate's monthly cap from that instant. A prepaid change names its prepaid wash
+// and carries no plan. A zero Kind is written as a plan change.
 type EntitlementChange struct {
-	Seq          int64
-	Plate        string
-	Plan         Plan
-	CompanyID    string
-	CompanyName  string
-	QuotaResetAt time.Time
+	Seq           int64
+	Plate         string
+	Kind          ChangeKind
+	Plan          Plan
+	CompanyID     string
+	CompanyName   string
+	QuotaResetAt  time.Time
+	PrepaidWashID string
 }
 
 // Store is central's MariaDB ledger of sites, entitlements, and washes.
@@ -208,6 +241,8 @@ func (s *Store) SiteForToken(ctx context.Context, hash [sha256.Size]byte) (strin
 
 // RecordWashes stores each wash a site sent that central does not hold yet, in one transaction,
 // and marks the site as synced. A wash id already stored is reported as a duplicate and left unchanged.
+// A newly stored prepaid wash spends its prepaid wash unless an earlier wash already did, in which case
+// the wash is still stored: it happened, on a copy that had not yet heard of the first spend.
 func (s *Store) RecordWashes(ctx context.Context, siteID string, washes []Wash) (RecordResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -223,15 +258,27 @@ func (s *Store) RecordWashes(ctx context.Context, siteID string, washes []Wash) 
 	if err != nil {
 		return RecordResult{}, fmt.Errorf("read site: %w", err)
 	}
+	// A spend appends to the change log, so the batch takes the cursor before any prepaid row, as every writer does.
+	if slices.ContainsFunc(washes, func(wash Wash) bool { return wash.Plan == PlanPrepaid }) {
+		if err := lockEntitlementCursor(ctx, tx); err != nil {
+			return RecordResult{}, err
+		}
+	}
 
-	result := RecordResult{Stored: []string{}, Duplicates: []string{}}
+	result := RecordResult{Stored: []string{}, Duplicates: []string{}, SpentPrepaidWashes: []string{}}
 	for _, wash := range washes {
+		if wash.Plan == PlanPrepaid {
+			if err := requirePrepaidWash(ctx, tx, wash.PrepaidWashID); err != nil {
+				return RecordResult{}, err
+			}
+		}
 		// ON DUPLICATE KEY forgives only the repeated id. INSERT IGNORE would also turn a missing company into a warning.
 		inserted, err := tx.ExecContext(ctx,
-			`INSERT INTO washes (id, site_id, plate, plan, company_id, admitted_at, received_at)
-			VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))
+			`INSERT INTO washes (id, site_id, plate, plan, company_id, prepaid_wash_id, admitted_at, received_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))
 			ON DUPLICATE KEY UPDATE id = id`,
-			wash.ID, siteID, wash.Plate, string(wash.Plan), nullableString(wash.CompanyID), wash.AdmittedAt.UTC(),
+			wash.ID, siteID, wash.Plate, string(wash.Plan), nullableString(wash.CompanyID), nullableString(wash.PrepaidWashID),
+			wash.AdmittedAt.UTC(),
 		)
 		if isForeignKeyMissing(err) {
 			return RecordResult{}, ErrUnknownCompany
@@ -245,8 +292,18 @@ func (s *Store) RecordWashes(ctx context.Context, siteID string, washes []Wash) 
 		}
 		if rows == 0 {
 			result.Duplicates = append(result.Duplicates, wash.ID)
-		} else {
-			result.Stored = append(result.Stored, wash.ID)
+			continue
+		}
+		result.Stored = append(result.Stored, wash.ID)
+		if wash.Plan != PlanPrepaid {
+			continue
+		}
+		isFirstSpend, err := spendPrepaidWash(ctx, tx, wash)
+		if err != nil {
+			return RecordResult{}, err
+		}
+		if isFirstSpend {
+			result.SpentPrepaidWashes = append(result.SpentPrepaidWashes, wash.PrepaidWashID)
 		}
 	}
 
@@ -339,20 +396,11 @@ func (s *Store) ApplySubscriptionEvent(ctx context.Context, event SubscriptionEv
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// ON DUPLICATE KEY forgives only the repeated id, where INSERT IGNORE would hide any other failure as a warning.
-	inserted, err := tx.ExecContext(ctx,
-		`INSERT INTO stripe_events (event_id, type, received_at) VALUES (?, ?, UTC_TIMESTAMP(6))
-		ON DUPLICATE KEY UPDATE event_id = event_id`,
-		event.EventID, event.EventType,
-	)
+	isNew, err := storeEventID(ctx, tx, event.EventID, event.EventType)
 	if err != nil {
-		return "", fmt.Errorf("store event id: %w", err)
+		return "", err
 	}
-	rows, err := inserted.RowsAffected()
-	if err != nil {
-		return "", fmt.Errorf("count stored event id: %w", err)
-	}
-	if rows == 0 {
+	if !isNew {
 		return EventDuplicate, nil
 	}
 
@@ -458,19 +506,158 @@ func applyEndedSubscription(ctx context.Context, tx *sql.Tx, stripeSubscriptionI
 	return EventApplied, nil
 }
 
-// PremiumPrice reads the Premium price in öre that is valid at the given time.
-func (s *Store) PremiumPrice(ctx context.Context, at time.Time) (int64, error) {
-	var amountOre int64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT amount_ore FROM prices WHERE code = 'premium' AND valid_from <= ?
-		ORDER BY valid_from DESC LIMIT 1`,
-		at.UTC(),
-	).Scan(&amountOre)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNoPremiumPrice
+// GrantPrepaidWash stores the event id, registers the plate to the buyer if nobody holds it, stores the
+// prepaid wash, and appends the grant sites pull, all in one transaction. An event id already stored reports
+// a duplicate, and a prepaid wash already granted by another event about the same session is ignored.
+func (s *Store) GrantPrepaidWash(ctx context.Context, grant PrepaidGrant) (EventOutcome, error) {
+	if !normalizedPlate.MatchString(grant.Plate) {
+		return "", ErrInvalidEntitlement
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin prepaid grant: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	isNew, err := storeEventID(ctx, tx, grant.EventID, grant.EventType)
+	if err != nil {
+		return "", err
+	}
+	if !isNew {
+		return EventDuplicate, nil
+	}
+	if err := lockEntitlementCursor(ctx, tx); err != nil {
+		return "", err
+	}
+
+	// A single wash never takes a plate from its owner. It registers only a plate nobody holds yet.
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO vehicles (plate, customer_id, company_id) VALUES (?, ?, NULL)
+		ON DUPLICATE KEY UPDATE customer_id = IF(customer_id IS NULL AND company_id IS NULL, VALUES(customer_id), customer_id)`,
+		grant.Plate, grant.CustomerID,
+	)
+	if isForeignKeyMissing(err) {
+		return "", ErrUnknownCustomer
 	}
 	if err != nil {
-		return 0, fmt.Errorf("read premium price: %w", err)
+		return "", fmt.Errorf("write vehicle: %w", err)
+	}
+
+	inserted, err := tx.ExecContext(ctx,
+		`INSERT INTO prepaid_washes (id, plate, customer_id, paid_at) VALUES (?, ?, ?, UTC_TIMESTAMP(6))
+		ON DUPLICATE KEY UPDATE id = id`,
+		grant.PrepaidWashID, grant.Plate, grant.CustomerID,
+	)
+	if isForeignKeyMissing(err) {
+		return "", ErrUnknownCustomer
+	}
+	if err != nil {
+		return "", fmt.Errorf("write prepaid wash: %w", err)
+	}
+	rows, err := inserted.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("count written prepaid wash: %w", err)
+	}
+	outcome := EventIgnored
+	if rows > 0 {
+		outcome = EventApplied
+		if err := appendEntitlementChange(ctx, tx, EntitlementChange{
+			Plate:         grant.Plate,
+			Kind:          ChangeKindPrepaidGranted,
+			PrepaidWashID: grant.PrepaidWashID,
+		}); err != nil {
+			return "", err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit prepaid grant: %w", err)
+	}
+	return outcome, nil
+}
+
+// storeEventID stores a payment event's id and reports whether it is new. The caller applies the event's
+// effect in the same transaction, so a rolled-back effect leaves the id free for the provider's retry.
+func storeEventID(ctx context.Context, tx *sql.Tx, eventID, eventType string) (bool, error) {
+	// ON DUPLICATE KEY forgives only the repeated id, where INSERT IGNORE would hide any other failure as a warning.
+	inserted, err := tx.ExecContext(ctx,
+		`INSERT INTO stripe_events (event_id, type, received_at) VALUES (?, ?, UTC_TIMESTAMP(6))
+		ON DUPLICATE KEY UPDATE event_id = event_id`,
+		eventID, eventType,
+	)
+	if err != nil {
+		return false, fmt.Errorf("store event id: %w", err)
+	}
+	rows, err := inserted.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("count stored event id: %w", err)
+	}
+	return rows > 0, nil
+}
+
+func requirePrepaidWash(ctx context.Context, tx *sql.Tx, prepaidWashID string) error {
+	var exists bool
+	if err := tx.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT 1 FROM prepaid_washes WHERE id = ?)", prepaidWashID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("read prepaid wash: %w", err)
+	}
+	if !exists {
+		return ErrUnknownPrepaidWash
+	}
+	return nil
+}
+
+// spendPrepaidWash fills the spend only where none is recorded, and appends the spend sites pull when it did.
+// The caller holds the cursor lock.
+func spendPrepaidWash(ctx context.Context, tx *sql.Tx, wash Wash) (bool, error) {
+	updated, err := tx.ExecContext(ctx,
+		"UPDATE prepaid_washes SET spent_wash_id = ?, spent_at = ? WHERE id = ? AND spent_wash_id IS NULL",
+		wash.ID, wash.AdmittedAt.UTC(), wash.PrepaidWashID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("spend prepaid wash: %w", err)
+	}
+	rows, err := updated.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("count spent prepaid wash: %w", err)
+	}
+	if rows == 0 {
+		return false, nil
+	}
+	if err := appendEntitlementChange(ctx, tx, EntitlementChange{
+		Plate:         wash.Plate,
+		Kind:          ChangeKindPrepaidSpent,
+		PrepaidWashID: wash.PrepaidWashID,
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// PremiumPrice reads the Premium price in öre that is valid at the given time.
+func (s *Store) PremiumPrice(ctx context.Context, at time.Time) (int64, error) {
+	return s.priceAt(ctx, "premium", at, ErrNoPremiumPrice)
+}
+
+// SingleWashPrice reads the single wash price in öre that is valid at the given time.
+func (s *Store) SingleWashPrice(ctx context.Context, at time.Time) (int64, error) {
+	return s.priceAt(ctx, "single_wash", at, ErrNoSingleWashPrice)
+}
+
+// priceAt reads the price for code in force at the given time, reporting errNoPrice when none is yet.
+func (s *Store) priceAt(ctx context.Context, code string, at time.Time, errNoPrice error) (int64, error) {
+	var amountOre int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT amount_ore FROM prices WHERE code = ? AND valid_from <= ?
+		ORDER BY valid_from DESC LIMIT 1`,
+		code, at.UTC(),
+	).Scan(&amountOre)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, errNoPrice
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read %s price: %w", code, err)
 	}
 	return amountOre, nil
 }
@@ -511,10 +698,11 @@ func lockEntitlementCursor(ctx context.Context, tx *sql.Tx) error {
 // appendEntitlementChange adds change to the log sites pull. The caller holds the cursor lock.
 func appendEntitlementChange(ctx context.Context, tx *sql.Tx, change EntitlementChange) error {
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO entitlement_changes (plate, plan, company_id, company_name, quota_reset_at, changed_at)
-		VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(6))`,
-		change.Plate, nullableString(string(change.Plan)), nullableString(change.CompanyID), nullableString(change.CompanyName),
-		nullableTime(change.QuotaResetAt),
+		`INSERT INTO entitlement_changes (plate, kind, plan, company_id, company_name, quota_reset_at, prepaid_wash_id, changed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))`,
+		change.Plate, string(cmp.Or(change.Kind, ChangeKindPlan)), nullableString(string(change.Plan)),
+		nullableString(change.CompanyID), nullableString(change.CompanyName), nullableTime(change.QuotaResetAt),
+		nullableString(change.PrepaidWashID),
 	); err != nil {
 		return fmt.Errorf("append entitlement change: %w", err)
 	}
@@ -524,7 +712,7 @@ func appendEntitlementChange(ctx context.Context, tx *sql.Tx, change Entitlement
 // EntitlementChanges reads up to limit changes after the cursor, oldest first.
 func (s *Store) EntitlementChanges(ctx context.Context, after int64, limit int) ([]EntitlementChange, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT seq, plate, plan, company_id, company_name, quota_reset_at FROM entitlement_changes
+		`SELECT seq, plate, kind, plan, company_id, company_name, quota_reset_at, prepaid_wash_id FROM entitlement_changes
 		WHERE seq > ? ORDER BY seq LIMIT ?`,
 		after, limit,
 	)
@@ -536,15 +724,16 @@ func (s *Store) EntitlementChanges(ctx context.Context, after int64, limit int) 
 	changes := []EntitlementChange{}
 	for rows.Next() {
 		var change EntitlementChange
-		var plan, companyID, companyName sql.NullString
+		var plan, companyID, companyName, prepaidWashID sql.NullString
 		var quotaResetAt sql.NullTime
-		if err := rows.Scan(&change.Seq, &change.Plate, &plan, &companyID, &companyName, &quotaResetAt); err != nil {
+		if err := rows.Scan(&change.Seq, &change.Plate, &change.Kind, &plan, &companyID, &companyName, &quotaResetAt, &prepaidWashID); err != nil {
 			return nil, fmt.Errorf("scan entitlement change: %w", err)
 		}
 		change.Plan = Plan(plan.String)
 		change.CompanyID = companyID.String
 		change.CompanyName = companyName.String
 		change.QuotaResetAt = quotaResetAt.Time
+		change.PrepaidWashID = prepaidWashID.String
 		changes = append(changes, change)
 	}
 	if err := rows.Err(); err != nil {

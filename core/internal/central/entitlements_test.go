@@ -10,11 +10,13 @@ import (
 )
 
 type changeAnswer struct {
-	Seq         int64   `json:"seq"`
-	Plate       string  `json:"plate"`
-	Plan        *string `json:"plan"`
-	CompanyID   *string `json:"company_id"`
-	CompanyName *string `json:"company_name"`
+	Seq           int64   `json:"seq"`
+	Plate         string  `json:"plate"`
+	Kind          string  `json:"kind"`
+	Plan          *string `json:"plan"`
+	CompanyID     *string `json:"company_id"`
+	CompanyName   *string `json:"company_name"`
+	PrepaidWashID *string `json:"prepaid_wash_id"`
 }
 
 type entitlementsAnswer struct {
@@ -89,6 +91,33 @@ func TestGetEntitlements(t *testing.T) {
 		}
 		if revoke.Plan != nil || revoke.CompanyID != nil || revoke.CompanyName != nil {
 			t.Fatalf("revoke = %+v, want null plan and company", revoke)
+		}
+	})
+
+	t.Run("a plan change, a grant, and a spend come in seq order with their kind", func(t *testing.T) {
+		store, database := newTestStore(t)
+		token := provisionSite(t, store, testSiteID)
+		addCustomer(t, database, testCustomerID)
+		putEntitlement(t, store, Entitlement{Plate: "ABC123", Plan: PlanPremium})
+		grantPrepaidWash(t, store, singleWashGrant("evt_1", testPrepaidWashID))
+		if _, err := store.RecordWashes(t.Context(), testSiteID, []Wash{prepaidWash("w1", testPrepaidWashID)}); err != nil {
+			t.Fatalf("record prepaid wash: %v", err)
+		}
+
+		answer := decodeEntitlementsAnswer(t, getEntitlements(t, NewRouter(store, nil), token, ""))
+
+		if len(answer.Changes) != 3 {
+			t.Fatalf("changes = %+v, want 3", answer.Changes)
+		}
+		plan, granted, spent := answer.Changes[0], answer.Changes[1], answer.Changes[2]
+		if plan.Kind != "plan" || plan.PrepaidWashID != nil {
+			t.Fatalf("plan change = %+v, want kind plan with no prepaid wash", plan)
+		}
+		if granted.Kind != "prepaid_granted" || granted.PrepaidWashID == nil || *granted.PrepaidWashID != testPrepaidWashID || granted.Plan != nil {
+			t.Fatalf("grant = %+v, want prepaid_granted naming %s and no plan", granted, testPrepaidWashID)
+		}
+		if spent.Kind != "prepaid_spent" || spent.PrepaidWashID == nil || *spent.PrepaidWashID != testPrepaidWashID || spent.Plate != testPrepaidPlate {
+			t.Fatalf("spend = %+v, want prepaid_spent naming %s on %s", spent, testPrepaidWashID, testPrepaidPlate)
 		}
 	})
 

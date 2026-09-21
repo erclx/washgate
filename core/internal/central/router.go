@@ -13,6 +13,7 @@ func NewRouter(store *Store, payments *Payments) http.Handler {
 	mux.Handle("POST /washes", requireSite(store, ledger.handlePostWashes))
 	mux.Handle("GET /entitlements", requireSite(store, ledger.handleGetEntitlements))
 	mux.HandleFunc("POST /checkout", billing.handlePostCheckout)
+	mux.HandleFunc("POST /checkout/single-wash", billing.handlePostSingleWashCheckout)
 	mux.HandleFunc("POST /stripe/webhook", billing.handlePostStripeWebhook)
 	// Operator routes answer without a site token, since a site's token must never open them and central binds to loopback.
 	mux.HandleFunc("GET /plates/{plate}", operator.handleGetPlate)

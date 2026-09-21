@@ -102,6 +102,68 @@ func TestPostStripeWebhook(t *testing.T) {
 		}
 	})
 
+	t.Run("the same signed single-wash session posted twice answers 200 both times and grants once", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		router := newWebhookRouter(t, store)
+		payload := readStripeFixture(t, "checkout_session_completed_single_wash.json")
+
+		first := postWebhook(t, router, payload, stripeSignatureHeader(payload, testWebhookSecret))
+		second := postWebhook(t, router, payload, stripeSignatureHeader(payload, testWebhookSecret))
+
+		if first.Code != http.StatusOK || second.Code != http.StatusOK {
+			t.Fatalf("statuses = %d and %d, want 200 both times", first.Code, second.Code)
+		}
+		want := storedPrepaidWash{ID: testPrepaidWashID, Plate: testPrepaidPlate}
+		if got := readPrepaidWashes(t, database); len(got) != 1 || got[0] != want {
+			t.Fatalf("prepaid washes = %+v, want [%+v]", got, want)
+		}
+		if changes := readChanges(t, store, 0, 10); len(changes) != 1 || changes[0].Kind != ChangeKindPrepaidGranted {
+			t.Fatalf("changes = %+v, want one grant", changes)
+		}
+	})
+
+	t.Run("an unpaid single-wash session grants nothing", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		payload := strings.Replace(readStripeFixture(t, "checkout_session_completed_single_wash.json"), `"payment_status": "paid"`, `"payment_status": "unpaid"`, 1)
+
+		recorder := postWebhook(t, newWebhookRouter(t, store), payload, stripeSignatureHeader(payload, testWebhookSecret))
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+		}
+		if got := readPrepaidWashes(t, database); len(got) != 0 {
+			t.Fatalf("prepaid washes = %+v, want none", got)
+		}
+	})
+
+	t.Run("a subscription-mode session grants no prepaid wash", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		payload := readStripeFixture(t, "checkout_session_completed.json")
+
+		recorder := postWebhook(t, newWebhookRouter(t, store), payload, stripeSignatureHeader(payload, testWebhookSecret))
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+		}
+		if got := readPrepaidWashes(t, database); len(got) != 0 {
+			t.Fatalf("prepaid washes = %+v, want none", got)
+		}
+	})
+
+	t.Run("a single-wash session naming an unknown customer answers 422", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		payload := readStripeFixture(t, "checkout_session_completed_single_wash.json")
+
+		recorder := postWebhook(t, newWebhookRouter(t, store), payload, stripeSignatureHeader(payload, testWebhookSecret))
+
+		if recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
+		}
+	})
+
 	t.Run("a deleted subscription answers 200 and revokes the plate", func(t *testing.T) {
 		store, database := newTestStore(t)
 		addCustomer(t, database, testCustomerID)

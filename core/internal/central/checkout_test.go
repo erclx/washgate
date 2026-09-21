@@ -52,7 +52,17 @@ func newPayments(t *testing.T, stripeURL string) *Payments {
 
 func postCheckout(t *testing.T, router http.Handler, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/checkout", strings.NewReader(body))
+	return postCheckoutTo(t, router, "/checkout", body)
+}
+
+func postSingleWashCheckout(t *testing.T, router http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return postCheckoutTo(t, router, "/checkout/single-wash", body)
+}
+
+func postCheckoutTo(t *testing.T, router http.Handler, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
@@ -189,6 +199,140 @@ func TestPostCheckout(t *testing.T) {
 		server, _ := fakeStripe(t, http.StatusInternalServerError, `{"error":{"type":"api_error","message":"boom"}}`)
 
 		recorder := postCheckout(t, NewRouter(store, newPayments(t, server.URL)), `{"customer_id": "customer-anna", "plate": "ABC123"}`)
+
+		if recorder.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
+		}
+	})
+}
+
+func TestPostSingleWashCheckout(t *testing.T) {
+	const body = `{"customer_id": "customer-anna", "plate": "xyz789"}`
+
+	t.Run("answers 201 with a one-off payment session priced from the single_wash row and carrying the metadata", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		addPrice(t, database, "single_wash", 19900, testAdmittedAt.AddDate(-1, 0, 0))
+		server, received := fakeStripe(t, http.StatusOK, `{"id":"cs_test_1","url":"`+testCheckoutURL+`"}`)
+
+		recorder := postSingleWashCheckout(t, NewRouter(store, newPayments(t, server.URL)), body)
+
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want %d, body %q", recorder.Code, http.StatusCreated, recorder.Body.String())
+		}
+		var answer struct {
+			CheckoutURL string `json:"checkout_url"`
+		}
+		if err := json.NewDecoder(recorder.Body).Decode(&answer); err != nil {
+			t.Fatalf("decode answer: %v", err)
+		}
+		if answer.CheckoutURL != testCheckoutURL {
+			t.Fatalf("checkout url = %q, want %q", answer.CheckoutURL, testCheckoutURL)
+		}
+		want := map[string]string{
+			"mode":                                          "payment",
+			"line_items[0][price_data][currency]":           "sek",
+			"line_items[0][price_data][unit_amount]":        "19900",
+			"line_items[0][price_data][product_data][name]": "Single wash",
+			"metadata[kind]":                                "single_wash",
+			"metadata[customer_id]":                         testCustomerID,
+			"metadata[plate]":                               "XYZ789",
+			"success_url":                                   testSuccessURL,
+			"cancel_url":                                    testCancelURL,
+		}
+		for field, value := range want {
+			if got := received.Get(field); got != value {
+				t.Errorf("stripe form %s = %q, want %q", field, got, value)
+			}
+		}
+		if got := received.Get("line_items[0][price_data][recurring][interval]"); got != "" {
+			t.Errorf("recurring interval = %q, want none on a one-off payment", got)
+		}
+	})
+
+	t.Run("a body that is not JSON answers 400", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		server, _ := fakeStripe(t, http.StatusOK, `{}`)
+
+		recorder := postSingleWashCheckout(t, NewRouter(store, newPayments(t, server.URL)), `customer_id=customer-anna`)
+
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("an unknown customer answers 422", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addPrice(t, database, "single_wash", 19900, testAdmittedAt.AddDate(-1, 0, 0))
+		server, _ := fakeStripe(t, http.StatusOK, `{}`)
+
+		recorder := postSingleWashCheckout(t, NewRouter(store, newPayments(t, server.URL)), body)
+
+		if recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
+		}
+	})
+
+	t.Run("a plate registered to another customer answers 422", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		addCustomer(t, database, "customer-bo")
+		addPrice(t, database, "single_wash", 19900, testAdmittedAt.AddDate(-1, 0, 0))
+		putEntitlement(t, store, Entitlement{Plate: "XYZ789", Plan: PlanPremium, CustomerID: "customer-bo"})
+		server, _ := fakeStripe(t, http.StatusOK, `{}`)
+
+		recorder := postSingleWashCheckout(t, NewRouter(store, newPayments(t, server.URL)), body)
+
+		if recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
+		}
+	})
+
+	t.Run("a company car answers 422", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		addCompany(t, database, testCompanyID, testCompanyName)
+		addPrice(t, database, "single_wash", 19900, testAdmittedAt.AddDate(-1, 0, 0))
+		putEntitlement(t, store, Entitlement{Plate: "XYZ789", Plan: PlanFleet, CompanyID: testCompanyID})
+		server, _ := fakeStripe(t, http.StatusOK, `{}`)
+
+		recorder := postSingleWashCheckout(t, NewRouter(store, newPayments(t, server.URL)), body)
+
+		if recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
+		}
+	})
+
+	t.Run("no single_wash price answers 503", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		addPrice(t, database, "premium", 29900, testAdmittedAt.AddDate(-1, 0, 0))
+		server, _ := fakeStripe(t, http.StatusOK, `{}`)
+
+		recorder := postSingleWashCheckout(t, NewRouter(store, newPayments(t, server.URL)), body)
+
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+		}
+	})
+
+	t.Run("Stripe not configured answers 503", func(t *testing.T) {
+		store, _ := newTestStore(t)
+
+		recorder := postSingleWashCheckout(t, NewRouter(store, nil), body)
+
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+		}
+	})
+
+	t.Run("a Stripe failure answers 502", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addCustomer(t, database, testCustomerID)
+		addPrice(t, database, "single_wash", 19900, testAdmittedAt.AddDate(-1, 0, 0))
+		server, _ := fakeStripe(t, http.StatusInternalServerError, `{"error":{"type":"api_error","message":"boom"}}`)
+
+		recorder := postSingleWashCheckout(t, NewRouter(store, newPayments(t, server.URL)), body)
 
 		if recorder.Code != http.StatusBadGateway {
 			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)

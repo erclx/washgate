@@ -19,12 +19,14 @@ type entitlementChangesResponse struct {
 }
 
 type entitlementChangeResponse struct {
-	Seq          int64      `json:"seq"`
-	Plate        string     `json:"plate"`
-	Plan         *string    `json:"plan"`
-	CompanyID    *string    `json:"company_id"`
-	CompanyName  *string    `json:"company_name"`
-	QuotaResetAt *time.Time `json:"quota_reset_at"`
+	Seq           int64      `json:"seq"`
+	Plate         string     `json:"plate"`
+	Kind          ChangeKind `json:"kind"`
+	Plan          *string    `json:"plan"`
+	CompanyID     *string    `json:"company_id"`
+	CompanyName   *string    `json:"company_name"`
+	QuotaResetAt  *time.Time `json:"quota_reset_at"`
+	PrepaidWashID *string    `json:"prepaid_wash_id"`
 }
 
 func (l *ledger) handleGetEntitlements(w http.ResponseWriter, r *http.Request) {
@@ -47,12 +49,14 @@ func (l *ledger) handleGetEntitlements(w http.ResponseWriter, r *http.Request) {
 	response := entitlementChangesResponse{Changes: make([]entitlementChangeResponse, 0, len(changes)), Next: after}
 	for _, change := range changes {
 		response.Changes = append(response.Changes, entitlementChangeResponse{
-			Seq:          change.Seq,
-			Plate:        change.Plate,
-			Plan:         optionalString(string(change.Plan)),
-			CompanyID:    optionalString(change.CompanyID),
-			CompanyName:  optionalString(change.CompanyName),
-			QuotaResetAt: optionalTime(change.QuotaResetAt),
+			Seq:           change.Seq,
+			Plate:         change.Plate,
+			Kind:          change.Kind,
+			Plan:          optionalString(string(change.Plan)),
+			CompanyID:     optionalString(change.CompanyID),
+			CompanyName:   optionalString(change.CompanyName),
+			QuotaResetAt:  optionalTime(change.QuotaResetAt),
+			PrepaidWashID: optionalString(change.PrepaidWashID),
 		})
 		response.Next = change.Seq
 	}

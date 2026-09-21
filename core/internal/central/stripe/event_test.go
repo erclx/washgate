@@ -55,7 +55,28 @@ func TestDecodeEvent(t *testing.T) {
 		}
 	})
 
-	t.Run("an unhandled type decodes to its envelope alone", func(t *testing.T) {
+	t.Run("a completed single-wash session gives its id, mode, payment status, and metadata", func(t *testing.T) {
+		payload := readFixture(t, "checkout_session_completed_single_wash.json")
+
+		event, err := DecodeEvent(payload)
+
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		want := CheckoutSessionCompleted{
+			SessionID:     "cs_test_single_wash_1",
+			Mode:          "payment",
+			PaymentStatus: "paid",
+			Kind:          "single_wash",
+			CustomerID:    "customer-anna",
+			Plate:         "XYZ789",
+		}
+		if event.Type != EventCheckoutSessionCompleted || event.CheckoutSessionCompleted == nil || *event.CheckoutSessionCompleted != want {
+			t.Fatalf("event = %s %+v, want %+v", event.Type, event.CheckoutSessionCompleted, want)
+		}
+	})
+
+	t.Run("a completed subscription session decodes with no single-wash metadata", func(t *testing.T) {
 		payload := readFixture(t, "checkout_session_completed.json")
 
 		event, err := DecodeEvent(payload)
@@ -63,11 +84,35 @@ func TestDecodeEvent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if event.ID != "evt_test_checkout_completed_0001" || event.Type != "checkout.session.completed" {
-			t.Fatalf("envelope = %s %s, want the checkout event", event.ID, event.Type)
+		want := CheckoutSessionCompleted{SessionID: "cs_test_0001", Mode: "subscription", PaymentStatus: "paid"}
+		if event.CheckoutSessionCompleted == nil || *event.CheckoutSessionCompleted != want {
+			t.Fatalf("session = %+v, want %+v", event.CheckoutSessionCompleted, want)
 		}
-		if event.InvoicePaid != nil || event.SubscriptionDeleted != nil {
+	})
+
+	t.Run("an unhandled type decodes to its envelope alone", func(t *testing.T) {
+		payload := []byte(`{"id":"evt_1","type":"customer.created","data":{"object":{"id":"cus_1"}}}`)
+
+		event, err := DecodeEvent(payload)
+
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if event.ID != "evt_1" || event.Type != "customer.created" {
+			t.Fatalf("envelope = %s %s, want evt_1 customer.created", event.ID, event.Type)
+		}
+		if event.InvoicePaid != nil || event.SubscriptionDeleted != nil || event.CheckoutSessionCompleted != nil {
 			t.Fatalf("event = %+v, want the envelope alone", event)
+		}
+	})
+
+	t.Run("a completed session naming no id is rejected", func(t *testing.T) {
+		payload := []byte(`{"id":"evt_1","type":"checkout.session.completed","data":{"object":{"mode":"payment"}}}`)
+
+		_, err := DecodeEvent(payload)
+
+		if !errors.Is(err, ErrIncompleteEvent) {
+			t.Fatalf("error = %v, want ErrIncompleteEvent", err)
 		}
 	})
 

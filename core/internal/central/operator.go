@@ -112,7 +112,7 @@ func (o *operator) handleGetPlate(w http.ResponseWriter, r *http.Request) {
 		response.Subscription = &subscriptionResponse{Plan: lookup.Subscription.Plan, Status: lookup.Subscription.Status}
 	}
 	for _, wash := range lookup.Washes {
-		response.Washes = append(response.Washes, plateWashResponse(wash))
+		response.Washes = append(response.Washes, plateWashResponse{AdmittedAt: wash.AdmittedAt, SiteID: wash.SiteID})
 	}
 	writeJSON(w, http.StatusOK, response)
 }

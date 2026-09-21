@@ -1,0 +1,37 @@
+{
+  "id": "evt_test_single_wash_completed_0001",
+  "object": "event",
+  "api_version": "2025-03-31.basil",
+  "created": 1789975800,
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": { "id": null, "idempotency_key": null },
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "id": "cs_test_single_wash_1",
+      "object": "checkout.session",
+      "amount_subtotal": 19900,
+      "amount_total": 19900,
+      "cancel_url": "http://localhost:5173/?checkout=cancel",
+      "client_reference_id": "customer-anna",
+      "created": 1789975700,
+      "currency": "sek",
+      "customer": null,
+      "customer_creation": "if_required",
+      "expires_at": 1790062100,
+      "livemode": false,
+      "metadata": {
+        "customer_id": "customer-anna",
+        "kind": "single_wash",
+        "plate": "XYZ789"
+      },
+      "mode": "payment",
+      "payment_intent": "pi_test_single_wash_1",
+      "payment_status": "paid",
+      "status": "complete",
+      "subscription": null,
+      "success_url": "http://localhost:5173/?checkout=success"
+    }
+  }
+}

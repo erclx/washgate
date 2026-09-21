@@ -228,6 +228,31 @@ func TestLookupPlateCountsFromTheLatestReset(t *testing.T) {
 	}
 }
 
+func TestLookupPlateLeavesAPrepaidWashOutOfTheCap(t *testing.T) {
+	store, database := newTestStore(t)
+	addCustomer(t, database, testCustomerID)
+	addSite(t, database, testSiteID)
+	subscribePremium(t, store, "ABC123")
+	monthStart := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	addWashAt(t, store, "w-premium", "ABC123", monthStart.Add(time.Hour))
+	grant := singleWashGrant("evt_single_wash", testPrepaidWashID)
+	grant.Plate = "ABC123"
+	grantPrepaidWash(t, store, grant)
+	prepaid := Wash{ID: "w-prepaid", Plate: "ABC123", Plan: PlanPrepaid, PrepaidWashID: testPrepaidWashID, AdmittedAt: monthStart.Add(2 * time.Hour)}
+	if _, err := store.RecordWashes(t.Context(), testSiteID, []Wash{prepaid}); err != nil {
+		t.Fatalf("record prepaid wash: %v", err)
+	}
+
+	lookup, err := store.LookupPlate(t.Context(), "ABC123", monthStart)
+	if err != nil {
+		t.Fatalf("look up plate: %v", err)
+	}
+
+	if len(lookup.Washes) != 2 || lookup.WashesSinceReset != 1 {
+		t.Fatalf("lookup = %+v, want two washes this month and one counted toward the cap", lookup)
+	}
+}
+
 func TestPostQuotaReset(t *testing.T) {
 	t.Run("a reset records one change carrying its time", func(t *testing.T) {
 		store, database := newTestStore(t)

@@ -39,10 +39,11 @@ type Subscription struct {
 type PlateWash struct {
 	AdmittedAt time.Time
 	SiteID     string
+	Plan       Plan
 }
 
 // PlateLookup is what central knows about one plate this month. WashesSinceReset counts the washes
-// the monthly cap is measured against, which are those since the later of the month start and the latest reset.
+// the monthly cap is measured against, which are the Premium washes since the later of the month start and the latest reset.
 type PlateLookup struct {
 	Plate            string
 	OwnerType        OwnerType
@@ -113,7 +114,7 @@ func (s *Store) LookupPlate(ctx context.Context, plate string, monthStart time.T
 		return PlateLookup{}, err
 	}
 	for _, wash := range lookup.Washes {
-		if !wash.AdmittedAt.Before(lookup.QuotaResetAt) {
+		if wash.Plan == PlanPremium && !wash.AdmittedAt.Before(lookup.QuotaResetAt) {
 			lookup.WashesSinceReset++
 		}
 	}
@@ -234,7 +235,7 @@ func storedQuotaReset(ctx context.Context, db queryer, id string) (QuotaReset, e
 
 func washesSince(ctx context.Context, db queryer, plate string, since time.Time) ([]PlateWash, error) {
 	rows, err := db.QueryContext(ctx,
-		"SELECT admitted_at, site_id FROM washes WHERE plate = ? AND admitted_at >= ? ORDER BY admitted_at, id",
+		"SELECT admitted_at, site_id, plan FROM washes WHERE plate = ? AND admitted_at >= ? ORDER BY admitted_at, id",
 		plate, since.UTC(),
 	)
 	if err != nil {
@@ -245,7 +246,7 @@ func washesSince(ctx context.Context, db queryer, plate string, since time.Time)
 	washes := []PlateWash{}
 	for rows.Next() {
 		var wash PlateWash
-		if err := rows.Scan(&wash.AdmittedAt, &wash.SiteID); err != nil {
+		if err := rows.Scan(&wash.AdmittedAt, &wash.SiteID, &wash.Plan); err != nil {
 			return nil, fmt.Errorf("scan wash: %w", err)
 		}
 		washes = append(washes, wash)
