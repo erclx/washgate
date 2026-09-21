@@ -17,7 +17,7 @@ Only the camera and the customers are simulated. Every service, database, and ne
 
 ## Status
 
-Scaffolded, not yet working end to end. Each component builds and passes its checks. The central API stores each wash a site sends exactly once and serves the entitlement changes a site pulls, though no site pushes or pulls yet. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
+Scaffolded, not yet working end to end. Each component builds and passes its checks. The central API stores each wash a site sends exactly once and serves the entitlement changes a site pulls, though no site pushes or pulls yet. The invoicing service serves a month of fleet washes as CSV at `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` grouping by leasing company. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
 
 ## Setup
 
