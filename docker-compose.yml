@@ -53,5 +53,20 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  invoicing:
+    build:
+      context: ./invoicing
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-washgate}
+      DB_USER: ${DB_USER:-washgate}
+      DB_PASSWORD: ${DB_PASSWORD:-washgate}
+    ports:
+      - '127.0.0.1:${INVOICING_PORT:-8082}:8080'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   mariadb-data:

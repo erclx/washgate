@@ -35,6 +35,8 @@ Owns how the project runs on a developer machine: installing the toolchain, the 
 - Data lives in the `mariadb-data` volume. `docker compose down -v` is the one command that drops it.
 - The central MariaDB tests in `core/` read `CENTRAL_TEST_DSN` and skip when it is unset, so `bun run test:run` stays green without compose. To run them, bring up compose's MariaDB and point the variable at a user that can create databases, such as root: `CENTRAL_TEST_DSN='root:washgate-root@tcp(127.0.0.1:3306)/'`. The compose `washgate` user cannot create databases.
 - `core/internal/testdb` gives each test its own database with every migration applied and drops it afterwards.
+- The invoicing MariaDB tests read `INVOICING_TEST_DSN`, `INVOICING_TEST_USER`, and `INVOICING_TEST_PASSWORD` and skip when the DSN is unset. Copy the three from `.env.example`. `invoicing/tests/Database/TemporaryDatabase.php` applies `core/migrations/*.up.sql` to a per-test database, so a schema change in Go reaches the PHP tests.
+- The `invoicing` compose service serves `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` adding the leasing company column, on `127.0.0.1:${INVOICING_PORT:-8082}`. It answers 422 while no `fleet_wash` price is in force for a fleet wash.
 
 ## Scripts
 

@@ -1,8 +1,11 @@
 arlanda
+frakt
 kista
 nakhon
+nord
 nordfrakt
 siteagent
 testdb
+volvia
 washctl
 washgate
