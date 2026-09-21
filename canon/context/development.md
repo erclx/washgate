@@ -37,6 +37,8 @@ Owns how the project runs on a developer machine: installing the toolchain, the 
 - Parallel worktree sessions each start their own throwaway MariaDB for these tests rather than sharing compose's 3306: `docker run -d --name washgate-<topic>-test -e MARIADB_ROOT_PASSWORD=washgate-root -p 127.0.0.1:<free port>:3306 mariadb:11.8`, with `CENTRAL_TEST_DSN` pointed at that port.
 - `core/internal/testdb` gives each test its own database with every migration applied and drops it afterwards.
 - Central's Stripe routes, `POST /checkout` and `POST /stripe/webhook`, answer 503 until `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are both set, so the stack starts with no Stripe account. Central exits on a key that is not `sk_test_` or `rk_test_`. `docker compose --profile stripe up` adds the `stripe-cli` forwarder.
+- The invoicing MariaDB tests read `INVOICING_TEST_DSN`, `INVOICING_TEST_USER`, and `INVOICING_TEST_PASSWORD` and skip when the DSN is unset. Copy the three from `.env.example`. `invoicing/tests/Database/TemporaryDatabase.php` applies `core/migrations/*.up.sql` to a per-test database, so a schema change in Go reaches the PHP tests.
+- The `invoicing` compose service serves `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` adding the leasing company column, on `127.0.0.1:${INVOICING_PORT:-8082}`. It answers 422 while no `fleet_wash` price is in force for a fleet wash.
 
 ## Scripts
 
