@@ -38,7 +38,7 @@ def create_app(
         if plate_read is None:
             raise HTTPException(status_code=404, detail='no plate found in image')
         try:
-            await run_in_threadpool(forwarder.forward, plate_read)
+            await run_in_threadpool(forwarder.forward, plate_read, image_bytes)
         except OSError:
             logger.warning('forward to site agent failed, read returned anyway')
         return plate_read

@@ -8,6 +8,7 @@ offlinesync
 siteagent
 syncer
 testdb
+venv
 volvia
 washctl
 washgate

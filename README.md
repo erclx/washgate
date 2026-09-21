@@ -19,7 +19,7 @@ Only the camera and the customers are simulated. Every service, database, and ne
 
 Scaffolded, not yet working end to end. Each component builds and passes its checks. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
 
-- **Plate reader**: not built yet.
+- **Plate reader**: runs in Compose with its model weights baked into the image, reads a posted photo, and sends the read and the photo on to the site agent.
 - **Site agent**: decides entry from its local copy, pushes each wash to central through an outbox, and pulls entitlement changes back, so it keeps deciding with its link cut and central stores each wash once when the link returns. `GET /status` reports its outbox depth and last pull.
 - **Central**: stores each site wash once and opens a Stripe test-mode Checkout for Premium, applying each Stripe event once. Stripe stays off until a test key is set. Operators can look up a plate, reset a Premium plate's monthly quota, which reaches every site on its next pull, and list sites with their last sync.
 - **Invoicing**: serves a month of fleet washes as CSV at `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` grouping by leasing company.

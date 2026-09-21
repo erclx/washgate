@@ -12,3 +12,7 @@ class PlateRead(BaseModel, frozen=True):
     plate: str
     confidence: float
     box: BoundingBox
+
+
+class ForwardedRead(PlateRead, frozen=True):
+    photo: str
