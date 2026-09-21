@@ -49,14 +49,14 @@ The router normalizes the plate before it looks the plate up. See `canon/context
 
 ## Hidden contracts
 
-- `POST /reads` takes JSON with a `plate` string and a `confidence` from 0 to 1, both required. A missing field, a confidence outside the range, a second JSON value, or a body that is not JSON answers 400, and a content type other than `application/json` answers 415.
-- The answer is `decision`, `reason`, and, when a wash exists, `wash_id`. Extra fields in the request are ignored, which is why the reader's `box` does not break it.
-- The decision log line carries the decision, reason, and wash id and never the plate.
-- No plate image is written to disk or logged anywhere in the stack. The reader decodes the photo in memory and posts it on, and the site agent reads no photo field.
+- `POST /reads` takes JSON with a `plate` string and a `confidence` from 0 to 1, both required, and an optional `photo` as base64 JPEG. A missing field, a confidence outside the range, a photo that is not base64, a second JSON value, or a body that is not JSON answers 400, a body over 14 MiB answers 413, and a content type other than `application/json` answers 415.
+- The answer is `decision_id`, `decision`, `reason`, and, when a wash exists, `wash_id`. Extra fields in the request are ignored, which is why the reader's `box` does not break it.
+- The decision log line carries the decision id, decision, reason, and wash id and never the plate or the photo.
+- No plate image is written to disk or logged anywhere in the stack. The reader decodes the photo in memory and posts it on. The site agent holds it in memory while its car is the current car or an open staff decision, drops it after, and never writes it to SQLite.
 
 ## Gotchas
 
-- The site agent caps `POST /reads` at 4 KiB. The plate reader sends the photo as base64 beside the read, which is far larger, so the site agent refuses that body with 400 and the reader logs the failed send. The reader's own answer is unaffected. Until the cap or the feed changes, a read reaches the lane from a caller that posts `plate` and `confidence` alone.
+- The site agent caps `POST /reads` at 14 MiB, the plate reader's 10 MiB photo cap after base64 with room for the read. A reader photo cap raised past 10 MiB needs this cap raised with it.
 - `unknown_plate_offline` fires on a brand new site before its first pull, since a copy that never pulled counts as stale. Known plates still admit.
 - `cap_reached` is a `pay` outcome, not a refusal. The staff copy offers a single wash instead.
 
@@ -67,7 +67,18 @@ Head office reads and corrects what the lanes hold through routes that sit besid
 - `GET /plates/{plate}` on central answers a plate's owner, subscription, this month's washes, its Premium washes since its latest reset, and the reset instant. A malformed plate answers 400 and a plate central holds no vehicle for answers 404.
 - `POST /plates/{plate}/quota-resets` on central takes a reset `id` and an optional note. It applies only to a plate on an active Premium subscription, answering 404 with none and 409 for any other plan. The id is stored with its effect, so a retry returns the stored reset with 200, and an id already used for another plate answers 409.
 - `GET /sites` on central lists each site with its last push time.
-- `GET /status` on the site agent answers its site id, its outbox depth, and when its copy last pulled. Central cannot know either number.
+- `GET /status` on the site agent answers its site id, `link` as `online`, `offline`, or `cut`, its outbox depth, when its copy last pulled, and `is_syncing`. Central cannot know any of them. The link reads `offline` until the first sync succeeds and after any failed one. washctl and the dashboard both read this body, so a field change breaks one of them.
+
+## Lane feed
+
+The site agent tells the dashboard what it decided about each car and takes the staff answer. Everything here lives in memory in `core/internal/siteagent/feed.go`, since central holds the ledger and nothing about a past car needs to survive a restart.
+
+- `GET /lane/events` streams server-sent events named `decision`, `resolved`, and `synced`. A decision carries its id, time, plate, confidence, outcome, reason, wash id, Premium wash number this month, fleet company name, the cutoff, whether a photo is held, and a four-step trace of `entitlement_lookup`, `ledger_write`, `outbox_entry`, and `sync_to_hq`. `synced` carries the `wash_ids` central acknowledged, and the dashboard flips their `sync_to_hq` step to done. These bodies are also the Replay recording format.
+- A new subscriber gets every open staff decision and nothing settled. A subscriber 64 events behind is dropped rather than slowing the lane.
+- `GET /lane/photos/{id}` serves the photo held for a decision and answers 404 once it is dropped.
+- `POST /lane/decisions/{id}/confirm` with `{"plate"}` re-runs the decision on the typed plate at confidence 1. An admit carries `confirmed_by_staff`, a pay keeps its own reason, and a staff answer, such as `unknown_plate_offline` on a stale copy, stays open with the typed plate. `POST /lane/decisions/{id}/send-to-pay` answers pay with `sent_to_pay_by_staff` and writes nothing. Both answer 404 for an unknown id and 409 for a settled one, and confirm answers 400 for a malformed plate.
+- At most 20 staff decisions stay open. A 21st sends the oldest to pay with a warning log.
+- `PUT /site/link` with `{"cut": true}` or `false` cuts or restores the link to central. The syncer skips every tick while cut. The switch is in memory, so a restart restores the link.
 
 Central's operator routes carry no site token, and a site token never opens them. Central binds to loopback in Compose and that is the only guard. All three take a plate in any typed form and read it through `canonicalPlate`, the full rule from `canon/context/plates.md`.
 

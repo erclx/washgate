@@ -55,7 +55,7 @@ The default comes from scoring the model against 56 hand-labeled Wikimedia Commo
 ## Gotchas
 
 - A local `uv run` downloads the model weights on the first read, so it needs the network once. The Docker image downloads them at build, so a container reads with the network down.
-- The reader posts the photo to the site agent as base64 beside the read. The site agent caps `POST /reads` at 4 KiB, so it refuses that body with 400 and the reader logs the failed send and still answers its caller. Reads reach the lane only from a caller that posts `plate` and `confidence` directly. See `canon/context/lane.md`.
+- The reader posts the photo to the site agent as base64 beside the read. The site agent caps `POST /reads` at 14 MiB to fit the reader's 10 MiB image after base64, so raising the reader's cap means raising the site's with it. See `canon/context/lane.md`.
 - The reader retries a failed send three times with a growing pause and a two second timeout each, so a site agent that is down adds a few seconds to the reader's answer.
 
 ## Test image
