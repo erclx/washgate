@@ -36,6 +36,8 @@ const (
 	ReasonWithinCap      Reason = "within_cap"
 	ReasonCapReached     Reason = "cap_reached"
 	ReasonUnknownPlate   Reason = "unknown_plate"
+	// ReasonUnknownPlateOffline sends an unknown plate to staff because the copy is too old to say it holds no subscription.
+	ReasonUnknownPlateOffline Reason = "unknown_plate_offline"
 )
 
 // Read is one plate read from the lane camera.
@@ -61,12 +63,16 @@ type Facts struct {
 	Entitlement     Entitlement
 	WashesThisMonth int
 	LastWash        Wash
+	// LastPulledAt is when the copy last pulled from central, zero if it never has.
+	LastPulledAt time.Time
 }
 
 // Policy holds the site's tunable decision thresholds.
 type Policy struct {
 	MinConfidence float64
 	DedupWindow   time.Duration
+	// MaxOffline is how old the copy can grow before an unknown plate goes to staff rather than to payment.
+	MaxOffline time.Duration
 }
 
 // Decision is the answer the lane acts on. WashID is set only when an earlier wash is reused.
@@ -97,6 +103,9 @@ func Decide(read Read, facts Facts, policy Policy, now time.Time) Decision {
 		}
 		return Decision{Outcome: OutcomePay, Reason: ReasonCapReached}
 	default:
+		if isStale(facts.LastPulledAt, policy.MaxOffline, now) {
+			return Decision{Outcome: OutcomeStaff, Reason: ReasonUnknownPlateOffline}
+		}
 		return Decision{Outcome: OutcomePay, Reason: ReasonUnknownPlate}
 	}
 }
@@ -109,4 +118,9 @@ func MonthStart(now time.Time, location *time.Location) time.Time {
 
 func isInsideWindow(wash Wash, window time.Duration, now time.Time) bool {
 	return wash.ID != "" && now.Sub(wash.AdmittedAt) < window
+}
+
+// isStale reports a copy never pulled, or last pulled longer than maxOffline before now.
+func isStale(lastPulledAt time.Time, maxOffline time.Duration, now time.Time) bool {
+	return lastPulledAt.IsZero() || now.Sub(lastPulledAt) > maxOffline
 }

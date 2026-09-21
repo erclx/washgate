@@ -73,6 +73,22 @@ services:
     depends_on:
       - central
 
+  # No depends_on central: a site that starts before central is the offline case, and it must keep deciding.
+  site-agent:
+    build:
+      context: ./core
+      args:
+        CMD: site-agent
+    environment:
+      CENTRAL_URL: http://central:8080
+      SITE_ID: site-1
+      SITE_TOKEN: ${SITE_TOKEN:-local-dev-site-token-not-a-secret}
+      SITE_DB_PATH: /data/site.db
+    ports:
+      - '127.0.0.1:${SITE_PORT:-8081}:8081'
+    volumes:
+      - site-data:/data
+
   invoicing:
     build:
       context: ./invoicing
@@ -90,3 +106,4 @@ services:
 
 volumes:
   mariadb-data:
+  site-data:

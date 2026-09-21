@@ -4,7 +4,9 @@ kista
 nakhon
 nord
 nordfrakt
+offlinesync
 siteagent
+syncer
 testdb
 volvia
 washctl

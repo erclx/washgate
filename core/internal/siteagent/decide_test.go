@@ -8,7 +8,12 @@ import (
 var testNow = time.Date(2026, time.March, 15, 10, 0, 0, 0, time.UTC)
 
 func testPolicy() Policy {
-	return Policy{MinConfidence: 0.99, DedupWindow: 120 * time.Second}
+	return Policy{MinConfidence: 0.99, DedupWindow: 120 * time.Second, MaxOffline: 10 * time.Minute}
+}
+
+func pulledAgo(facts Facts, age time.Duration) Facts {
+	facts.LastPulledAt = testNow.Add(-age)
+	return facts
 }
 
 func newRead(plate string, confidence float64) Read {
@@ -96,10 +101,34 @@ func TestDecideCoversEveryReason(t *testing.T) {
 			want:  Decision{Outcome: OutcomeAdmit, Reason: ReasonDuplicateRead, WashID: "wash-8"},
 		},
 		{
-			name:  "unknown plate pays per wash",
+			name:  "unknown plate on a fresh copy pays per wash",
+			read:  newRead("XYZ789", 1),
+			facts: pulledAgo(Facts{}, 0),
+			want:  Decision{Outcome: OutcomePay, Reason: ReasonUnknownPlate},
+		},
+		{
+			name:  "unknown plate a second inside the offline limit pays per wash",
+			read:  newRead("XYZ789", 1),
+			facts: pulledAgo(Facts{}, 10*time.Minute-time.Second),
+			want:  Decision{Outcome: OutcomePay, Reason: ReasonUnknownPlate},
+		},
+		{
+			name:  "unknown plate a second past the offline limit goes to staff",
+			read:  newRead("XYZ789", 1),
+			facts: pulledAgo(Facts{}, 10*time.Minute+time.Second),
+			want:  Decision{Outcome: OutcomeStaff, Reason: ReasonUnknownPlateOffline},
+		},
+		{
+			name:  "unknown plate on a copy never pulled goes to staff",
 			read:  newRead("XYZ789", 1),
 			facts: Facts{},
-			want:  Decision{Outcome: OutcomePay, Reason: ReasonUnknownPlate},
+			want:  Decision{Outcome: OutcomeStaff, Reason: ReasonUnknownPlateOffline},
+		},
+		{
+			name:  "premium plate on a stale copy is still admitted",
+			read:  newRead("ABC123", 1),
+			facts: pulledAgo(premiumFacts(2), time.Hour),
+			want:  Decision{Outcome: OutcomeAdmit, Reason: ReasonWithinCap},
 		},
 	}
 	for _, tc := range cases {
