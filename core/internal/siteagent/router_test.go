@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -122,6 +123,56 @@ func TestReadsCountsASecondReadInsideTheWindowOnce(t *testing.T) {
 	want := readAnswer{Decision: "admit", Reason: "duplicate_read", WashID: first.WashID}
 	if first.WashID == "" || second != want {
 		t.Errorf("first = %+v, second = %+v, want second %+v", first, second, want)
+	}
+}
+
+func postReadsAtOnce(t *testing.T, router http.Handler, body string, count int) []readAnswer {
+	t.Helper()
+	recorders := make([]*httptest.ResponseRecorder, count)
+	var group sync.WaitGroup
+	for index := range recorders {
+		recorders[index] = httptest.NewRecorder()
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/reads", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		group.Go(func() { router.ServeHTTP(recorders[index], request) })
+	}
+	group.Wait()
+	answers := make([]readAnswer, count)
+	for index, recorder := range recorders {
+		answers[index] = decodeAnswer(t, recorder)
+	}
+	return answers
+}
+
+func distinctWashIDs(answers []readAnswer) map[string]bool {
+	washIDs := make(map[string]bool)
+	for _, answer := range answers {
+		washIDs[answer.WashID] = true
+	}
+	return washIDs
+}
+
+func countWashes(t *testing.T, store *Store) int {
+	t.Helper()
+	var washes int
+	if err := store.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM washes").Scan(&washes); err != nil {
+		t.Fatalf("count washes: %v", err)
+	}
+	return washes
+}
+
+func TestReadsArrivingAtOnceShareOneWash(t *testing.T) {
+	store := openSeededStore(t)
+	router := newTestRouter(t, store, testNow)
+
+	answers := postReadsAtOnce(t, router, `{"plate": "ABC123", "confidence": 1}`, 8)
+
+	washIDs := distinctWashIDs(answers)
+	if len(washIDs) != 1 || washIDs[""] {
+		t.Errorf("wash ids = %v, want one shared non-empty id", washIDs)
+	}
+	if got := countWashes(t, store); got != 1 {
+		t.Errorf("washes recorded = %d, want 1", got)
 	}
 }
 
