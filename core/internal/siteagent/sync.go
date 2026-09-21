@@ -66,11 +66,12 @@ type pullAnswer struct {
 }
 
 type pullChange struct {
-	Seq         int64   `json:"seq"`
-	Plate       string  `json:"plate"`
-	Plan        *string `json:"plan"`
-	CompanyID   *string `json:"company_id"`
-	CompanyName *string `json:"company_name"`
+	Seq          int64      `json:"seq"`
+	Plate        string     `json:"plate"`
+	Plan         *string    `json:"plan"`
+	CompanyID    *string    `json:"company_id"`
+	CompanyName  *string    `json:"company_name"`
+	QuotaResetAt *time.Time `json:"quota_reset_at"`
 }
 
 // Run syncs once at start and then every interval until ctx ends, logging only when the link
@@ -183,13 +184,17 @@ func (s *Syncer) pull(ctx context.Context) error {
 		}
 		changes := make([]EntitlementChange, 0, len(answer.Changes))
 		for _, change := range answer.Changes {
-			changes = append(changes, EntitlementChange{
+			entitlementChange := EntitlementChange{
 				Seq:         change.Seq,
 				Plate:       change.Plate,
 				Plan:        Plan(valueOf(change.Plan)),
 				CompanyID:   valueOf(change.CompanyID),
 				CompanyName: valueOf(change.CompanyName),
-			})
+			}
+			if change.QuotaResetAt != nil {
+				entitlementChange.QuotaResetAt = *change.QuotaResetAt
+			}
+			changes = append(changes, entitlementChange)
 		}
 		if err := s.store.ApplyChanges(ctx, changes, answer.Next, s.config.Now()); err != nil {
 			return err

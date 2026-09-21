@@ -41,6 +41,7 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 
 - Central registers each site named in `CENTRAL_SITE_TOKENS` at startup, as comma-separated `site-id=token` pairs with each token at least 32 characters, and exits on a malformed value. The variable is the whole set: a site left out keeps its row but loses its token, so an empty or unset value revokes every site. Compose sets `site-1` from `SITE_TOKEN`, whose default in `.env.example` is a local development value rather than a secret.
 - `POST /washes` and `GET /entitlements` answer 401 without a site's token, so a manual request to either sends `Authorization: Bearer <token>`. `GET /health` stays open.
+- The operator routes, `GET /plates/{plate}`, `POST /plates/{plate}/quota-resets` with `{"id": "...", "note": "..."}`, and `GET /sites`, take no token at all, since a site token must never open them and central binds to loopback. A quota reset makes every site count a Premium plate's monthly cap from the reset time once its next pull lands, and a repeated reset id changes nothing.
 - The central MariaDB tests in `core/` read `CENTRAL_TEST_DSN` and skip when it is unset, so `bun run test:run` stays green without compose. To run them, bring up compose's MariaDB and point the variable at a user that can create databases, such as root: `CENTRAL_TEST_DSN='root:washgate-root@tcp(127.0.0.1:3306)/'`. The compose `washgate` user cannot create databases.
 - Parallel worktree sessions each start their own throwaway MariaDB for these tests rather than sharing compose's 3306: `docker run -d --name washgate-<topic>-test -e MARIADB_ROOT_PASSWORD=washgate-root -p 127.0.0.1:<free port>:3306 mariadb:11.8`, with `CENTRAL_TEST_DSN` pointed at that port.
 - `core/internal/testdb` gives each test its own database with every migration applied and drops it afterwards.
@@ -50,6 +51,7 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 
 - The `site-agent` service runs `site-1` on `SITE_PORT` (default 8081). It has no `depends_on` central, since a site starting before central is the offline case. Every `SITE_SYNC_INTERVAL` (default `5s`) it pushes its outbox to central and pulls entitlement changes into its SQLite copy, which lives in the `site-data` volume at `/data/site.db`. Once the last good pull is older than `SITE_MAX_OFFLINE` (default `10m`), or before the first one, an unknown plate goes to staff instead of to payment.
 - Cut the site's link with `docker compose stop central`. The site keeps deciding, admitted washes wait in its outbox, and `docker compose start central` lets the next sync push them. The site logs only when the link goes down or comes back up.
+- `GET /status` on the site agent answers `site_id`, `outbox_depth`, and `last_synced_at`, the time of the last good pull, so a backlog shows while central is out of reach.
 
 ### Invoicing
 

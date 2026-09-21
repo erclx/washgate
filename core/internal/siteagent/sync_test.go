@@ -239,6 +239,23 @@ func TestSyncOncePull(t *testing.T) {
 		}
 	})
 
+	t.Run("a pulled quota reset stops earlier washes counting toward the cap", func(t *testing.T) {
+		store := openSeededStore(t)
+		recordWash(t, store, "ABC123", testNow.Add(-2*time.Hour))
+		central, server := newFakeCentral(t)
+		reset := premiumWire(6, "ABC123")
+		reset["quota_reset_at"] = testNow.Add(-time.Hour).Format(time.RFC3339Nano)
+		central.changes = []map[string]any{reset}
+
+		if err := newTestSyncer(store, server, testNow).SyncOnce(t.Context()); err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+
+		if got := washesCountedTowardTheCap(t, store, "ABC123"); got != 0 {
+			t.Errorf("washes counted = %d, want 0", got)
+		}
+	})
+
 	t.Run("asks from the stored cursor", func(t *testing.T) {
 		store := openSeededStore(t)
 		central, server := newFakeCentral(t)
