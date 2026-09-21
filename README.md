@@ -17,7 +17,7 @@ Only the camera and the customers are simulated. Every service, database, and ne
 
 ## Status
 
-Scaffolded, not yet working end to end. Each component builds and passes its checks, and the central API answers a health check. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
+Scaffolded, not yet working end to end. Each component builds and passes its checks. The central API stores each wash a site sends exactly once and serves the entitlement changes a site pulls, though no site pushes or pulls yet. The use cases the system is built to handle are in [canon/REQUIREMENTS.md](canon/REQUIREMENTS.md).
 
 ## Setup
 

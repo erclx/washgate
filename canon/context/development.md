@@ -31,6 +31,8 @@ Owns how the project runs on a developer machine: installing the toolchain, the 
 - Connection settings are the `DB_*` variables in `.env.example`. The compose file falls back to the same defaults when a variable is unset.
 - MariaDB commits DDL implicitly, so a migration failing halfway leaves a partial schema. Keep one statement per file or use `IF NOT EXISTS`.
 - Data lives in the `mariadb-data` volume. `docker compose down -v` is the one command that drops it.
+- The central MariaDB tests in `core/` read `CENTRAL_TEST_DSN` and skip when it is unset, so `bun run test:run` stays green without compose. To run them, bring up compose's MariaDB and point the variable at a user that can create databases, such as root: `CENTRAL_TEST_DSN='root:washgate-root@tcp(127.0.0.1:3306)/'`. The compose `washgate` user cannot create databases.
+- `core/internal/testdb` gives each test its own database with every migration applied and drops it afterwards.
 
 ## Scripts
 
