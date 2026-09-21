@@ -17,6 +17,20 @@ jobs:
     defaults:
       run:
         working-directory: core
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: washgate-root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CENTRAL_TEST_DSN: root:washgate-root@tcp(127.0.0.1:3306)/
     steps:
       - name: Checkout
         uses: actions/checkout@v4
