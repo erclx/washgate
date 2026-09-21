@@ -2,7 +2,9 @@ arlanda
 kista
 nakhon
 nordfrakt
+offlinesync
 siteagent
+syncer
 testdb
 washctl
 washgate
