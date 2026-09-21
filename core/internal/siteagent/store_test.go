@@ -157,6 +157,18 @@ func TestStoreLogsAFleetWashAgainstItsCompany(t *testing.T) {
 	}
 }
 
+func TestStoreFactsForAFleetPlateCarryItsCompanyName(t *testing.T) {
+	store := openSeededStore(t)
+
+	facts, err := store.Facts(t.Context(), "KLM456", MonthStart(testNow, time.UTC))
+	if err != nil {
+		t.Fatalf("read facts: %v", err)
+	}
+	if facts.CompanyName != "Nordfrakt AB" {
+		t.Errorf("company name = %q, want %q", facts.CompanyName, "Nordfrakt AB")
+	}
+}
+
 func TestStoreMonthCountIgnoresLastMonthsWashes(t *testing.T) {
 	store := openSeededStore(t)
 	monthStart := MonthStart(testNow, time.UTC)

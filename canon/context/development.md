@@ -42,6 +42,7 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 - Central registers each site named in `CENTRAL_SITE_TOKENS` at startup, as comma-separated `site-id=token` pairs with each token at least 32 characters, and exits on a malformed value. The variable is the whole set: a site left out keeps its row but loses its token, so an empty or unset value revokes every site. Compose sets `site-1` from `SITE_TOKEN`, whose default in `.env.example` is a local development value rather than a secret.
 - `POST /washes` and `GET /entitlements` answer 401 without a site's token, so a manual request to either sends `Authorization: Bearer <token>`. `GET /health` stays open.
 - The operator routes, `GET /plates/{plate}`, `POST /plates/{plate}/quota-resets` with `{"id": "...", "note": "..."}`, and `GET /sites`, take no token at all, since a site token must never open them and central binds to loopback. A quota reset makes every site count a Premium plate's monthly cap from the reset time once its next pull lands, and a repeated reset id changes nothing.
+- The site agent's lane feed, staff actions, photo, status, and link switch routes take no token either. The site agent binds to loopback in compose, there is no deployed environment, and a dashboard token would sit in the browser anyway, so this is a decision rather than an oversight.
 - The central MariaDB tests in `core/` read `CENTRAL_TEST_DSN` and skip when it is unset, so `bun run test:run` stays green without compose. To run them, bring up compose's MariaDB and point the variable at a user that can create databases, such as root: `CENTRAL_TEST_DSN='root:washgate-root@tcp(127.0.0.1:3306)/'`. The compose `washgate` user cannot create databases.
 - Parallel worktree sessions each start their own throwaway MariaDB for these tests rather than sharing compose's 3306: `docker run -d --name washgate-<topic>-test -e MARIADB_ROOT_PASSWORD=washgate-root -p 127.0.0.1:<free port>:3306 mariadb:11.8`, with `CENTRAL_TEST_DSN` pointed at that port.
 - `core/internal/testdb` gives each test its own database with every migration applied and drops it afterwards.
@@ -72,7 +73,7 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 
 ### Plate reader
 
-- The `plate-reader` service builds from `plate-reader/`, downloads its model weights at image build, and listens on `127.0.0.1:${PLATE_READER_PORT:-8000}`. Drive one read with `curl -H 'Content-Type: image/jpeg' --data-binary @lane.jpg http://localhost:8000/read`. It sends each read and its photo on to `http://site-agent:8081/reads` and still answers when that service is absent. The site agent refuses the photo until the lane feed lands, which the reader logs.
+- The `plate-reader` service builds from `plate-reader/`, downloads its model weights at image build, and listens on `127.0.0.1:${PLATE_READER_PORT:-8000}`. Drive one read with `curl -H 'Content-Type: image/jpeg' --data-binary @lane.jpg http://localhost:8000/read`. It sends each read and its photo on to `http://site-agent:8081/reads` and still answers when that service is absent.
 
 ### Dashboard
 

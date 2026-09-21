@@ -2,6 +2,7 @@ package siteagent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -116,12 +117,18 @@ func prepaidWire(seq int64, plate, kind string) map[string]any {
 }
 
 func newTestSyncer(store *Store, server *httptest.Server, now time.Time) *Syncer {
+	return newLinkedSyncer(store, server, now, NewFeed(), &LinkSwitch{})
+}
+
+func newLinkedSyncer(store *Store, server *httptest.Server, now time.Time, feed *Feed, link *LinkSwitch) *Syncer {
 	return NewSyncer(store, SyncConfig{
 		CentralURL: server.URL,
 		SiteID:     testSiteID,
 		Token:      testToken,
 		Client:     &http.Client{Timeout: 5 * time.Second},
 		Now:        func() time.Time { return now },
+		Feed:       feed,
+		Link:       link,
 	})
 }
 
@@ -413,5 +420,63 @@ func TestSyncOnceReportsAnUnreachableCentral(t *testing.T) {
 	}
 	if got := outboxDepth(t, store); got != 1 || !facts.LastPulledAt.Equal(testNow) {
 		t.Errorf("outbox depth = %d pulled at %v, want 1 at %v", got, facts.LastPulledAt, testNow)
+	}
+}
+
+func pushCount(central *fakeCentral) int {
+	central.mu.Lock()
+	defer central.mu.Unlock()
+	return len(central.pushes)
+}
+
+func TestSyncerObeysTheLinkSwitch(t *testing.T) {
+	t.Run("a cut link sends no request", func(t *testing.T) {
+		store := openSeededStore(t)
+		recordWash(t, store, "ABC123", testNow)
+		central, server := newFakeCentral(t)
+		link := &LinkSwitch{}
+		link.SetCut(true)
+
+		err := newLinkedSyncer(store, server, testNow, NewFeed(), link).tick(t.Context())
+
+		if !errors.Is(err, errLinkCut) || pushCount(central) != 0 || len(central.pullAfters) != 0 {
+			t.Errorf("tick = %v with %d pushes and %d pulls, want the cut link and no request", err, pushCount(central), len(central.pullAfters))
+		}
+	})
+
+	t.Run("restoring the link pushes on the next tick", func(t *testing.T) {
+		store := openSeededStore(t)
+		recordWash(t, store, "ABC123", testNow)
+		central, server := newFakeCentral(t)
+		link := &LinkSwitch{}
+		syncer := newLinkedSyncer(store, server, testNow, NewFeed(), link)
+		link.SetCut(true)
+		_ = syncer.tick(t.Context())
+		link.SetCut(false)
+
+		err := syncer.tick(t.Context())
+
+		if err != nil || pushCount(central) != 1 || outboxDepth(t, store) != 0 {
+			t.Errorf("tick = %v with %d pushes and outbox %d, want one push that empties the outbox", err, pushCount(central), outboxDepth(t, store))
+		}
+	})
+}
+
+func TestSyncOnceReportsExactlyTheClearedWashesToTheFeed(t *testing.T) {
+	store := openSeededStore(t)
+	ids := recordWashes(t, store, 3)
+	central, server := newFakeCentral(t)
+	central.acknowledge = func(pushed []string) ([]string, []string) { return pushed[:1], pushed[1:2] }
+	feed := NewFeed()
+	events := feed.Subscribe(t.Context())
+
+	_ = newLinkedSyncer(store, server, testNow, feed, &LinkSwitch{}).SyncOnce(t.Context())
+
+	got := drain(events)
+	if len(got) != 1 || got[0].Type != EventSynced {
+		t.Fatalf("events = %+v, want one synced event", got)
+	}
+	if washIDs := got[0].Body.(SyncedBody).WashIDs; !slices.Equal(washIDs, ids[:2]) {
+		t.Errorf("synced washes = %v, want %v", washIDs, ids[:2])
 	}
 }

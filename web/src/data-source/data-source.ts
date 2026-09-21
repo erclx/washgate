@@ -5,6 +5,7 @@ export type Reason =
   | 'fleet'
   | 'duplicate_read'
   | 'cap_reached'
+  | 'prepaid_wash'
   | 'unknown_plate'
   | 'unknown_plate_offline'
   | 'low_confidence'
