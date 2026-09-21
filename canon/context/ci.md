@@ -39,6 +39,8 @@ All jobs across the workflows below must pass before merge.
 | Plate reader | `plate-reader/` | `uv sync --frozen`, then `lint`, `typecheck`, `test:run` |
 | Web          | `web/`          | `typecheck`, `lint`, `test:coverage`, `build`            |
 
+The core job runs a `mariadb:11.8` service with a health check and sets `CENTRAL_TEST_DSN` to its root user, so the central integration tests run on every pull request instead of skipping.
+
 `.github/workflows/phase-label-gate.yml` scans a pull request for a phase label, a board identifier, or a session link.
 
 ## Running CI locally

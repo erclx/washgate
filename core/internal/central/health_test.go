@@ -10,7 +10,8 @@ func TestHealthReportsOK(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil)
 
-	NewRouter().ServeHTTP(recorder, request)
+	// Health is a liveness check that never touches the database.
+	NewRouter(nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)

@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS entitlement_cursor;
+DROP TABLE IF EXISTS entitlement_changes;
+DROP TABLE IF EXISTS washes;
+DROP TABLE IF EXISTS prices;
+DROP TABLE IF EXISTS subscriptions;
+DROP TABLE IF EXISTS vehicles;
+DROP TABLE IF EXISTS companies;
+DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS sites;
