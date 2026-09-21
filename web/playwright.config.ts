@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const isCI = !!process.env.CI
-const baseURL = `http://localhost:${5173 + (Number(process.env.WORKTREE_PORT_OFFSET) || 0)}`
+// The default run serves the replay build, which needs no backend. The compose spec reads WASHGATE_STACK_URL instead.
+const baseURL = `http://localhost:${4173 + (Number(process.env.WORKTREE_PORT_OFFSET) || 0)}`
 
 export default defineConfig({
   testDir: 'e2e',
@@ -24,7 +25,7 @@ export default defineConfig({
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
   webServer: {
-    command: 'bun run dev',
+    command: 'bun run build:replay && bun run preview',
     url: baseURL,
     reuseExistingServer: false,
   },

@@ -97,3 +97,5 @@ innodb
 VARCHAR
 livemode
 whsec
+fontsource
+vite

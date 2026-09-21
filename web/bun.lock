@@ -5,6 +5,8 @@
     "": {
       "name": "web",
       "dependencies": {
+        "@fontsource/ubuntu-sans": "^5.3.0",
+        "@fontsource/ubuntu-sans-mono": "^5.3.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
       },
@@ -170,6 +172,10 @@
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.4.1", "", { "dependencies": { "@eslint/core": "^0.17.0", "levn": "^0.4.1" } }, "sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA=="],
 
     "@exodus/bytes": ["@exodus/bytes@1.15.1", "", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, "sha512-S6mL0yNB/Abt9Ei4tq8gDhcczc4S3+vQ4ra7vxnAf+YHC02srtqxKKZghx2Dq6p0e66THKwR6r8N6P95wEty7Q=="],
+
+    "@fontsource/ubuntu-sans": ["@fontsource/ubuntu-sans@5.3.0", "", {}, "sha512-hTx2FNTv4w3aRyP+GPfrMqoUn9QSp6YclXCLeuihWnK9I4V/hmHKaCkJ0dW1SVpx91ZoyzgC3uJxyOY6uDIlbQ=="],
+
+    "@fontsource/ubuntu-sans-mono": ["@fontsource/ubuntu-sans-mono@5.3.0", "", {}, "sha512-7SGXQ43Q+gq7kSU2SMaHDBP5injQ07c0hYFsO5lwYT51WQ6qs2mO+lGfzb8Y6yTUZXuQFj2X4MyMZuvumu4TAw=="],
 
     "@humanfs/core": ["@humanfs/core@0.19.2", "", { "dependencies": { "@humanfs/types": "^0.15.0" } }, "sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA=="],
 

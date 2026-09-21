@@ -1,111 +1,111 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+@import 'tailwindcss';
+@import '@fontsource/ubuntu-sans/400.css';
+@import '@fontsource/ubuntu-sans-mono/400.css';
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+@font-face {
+  font-family: 'Charter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/charter/charter_bold.woff2') format('woff2');
+}
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@theme {
+  --color-background: #f2f3f1;
+  --color-surface: #fcfcfb;
+  --color-text: #1c2120;
+  --color-muted: #69716f;
+  --color-accent: #0f5c66;
+  --color-success: #2f7a3d;
+  --color-warning: #9a6a12;
+  --color-error: #b3261e;
+  --color-staff: #6b3fa0;
+  --color-border: #dcdfdb;
+  --color-admit-tint: #edf5ea;
+  --color-pay-tint: #faf1dc;
+  --color-staff-tint: #f1ebf7;
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  --font-display: 'Charter', 'Bitstream Charter', Georgia, serif;
+  --font-sans: 'Ubuntu Sans', system-ui, sans-serif;
+  --font-mono: 'Ubuntu Sans Mono', ui-monospace, monospace;
+
+  --text-display: 30px;
+  --text-display--line-height: 33px;
+  --text-display--font-weight: 700;
+  --text-heading: 24px;
+  --text-heading--line-height: 30px;
+  --text-heading--font-weight: 700;
+  --text-body: 15px;
+  --text-body--line-height: 22px;
+  --text-label: 12px;
+  --text-label--line-height: 16px;
+  --text-code: 15px;
+  --text-code--line-height: 22px;
+
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 40px;
+
+  --radius-card: 10px;
+  --radius-pill: 8px;
+  --radius-plate: 4px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+    --color-background: #131716;
+    --color-surface: #1a1f1e;
+    --color-text: #e9eeec;
+    --color-muted: #95a09d;
+    --color-accent: #5fb3bd;
+    --color-success: #7cc48a;
+    --color-warning: #e2b454;
+    --color-error: #f2847a;
+    --color-staff: #b99be0;
+    --color-border: #2a3130;
+    --color-admit-tint: #1c2a1d;
+    --color-pay-tint: #2e2513;
+    --color-staff-tint: #2a2233;
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
 
-body {
-  margin: 0;
-}
+  body {
+    margin: 0;
+    background-color: var(--color-background);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+  }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+  button:disabled {
+    cursor: not-allowed;
   }
 }
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+
+@keyframes decision-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
-p {
-  margin: 0;
-}
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+@media (prefers-reduced-motion: no-preference) {
+  .decision-enter {
+    animation: decision-fade 150ms ease-out;
+  }
 }

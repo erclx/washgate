@@ -74,7 +74,12 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 
 ### Dashboard
 
-- Not built yet. Its service goes in `web/compose.yaml`, which holds no services yet.
+- The dashboard builds two ways from one codebase, picked by `VITE_DATA_SOURCE` at build time. `live` reads the site agents and central. `replay` plays the recorded run in `web/src/data-source/replay/fixtures/` and makes no network call. `web/vite.config.ts` validates the variable and hands it to the code as the literal `__IS_REPLAY_BUILD__`, since Rollup drops the unused data source only when the branch sits on a literal. A constant imported from another module keeps both bundles whole.
+- The compose `web` service serves the Live build on `127.0.0.1:${WEB_PORT:-8090}`. Its nginx proxies `/api/central/` to central and `/api/sites/site-1/` to the `site-agent` service, so the browser stays same-origin and no Go service needs CORS.
+- `bun run dev` in `web/` serves Live with the same proxy: `/api/central` to `CENTRAL_URL` (default `http://localhost:8080`), and each site in `VITE_SITES` to a site agent counting up from port 8081, so a second site would land on 8082, which invoicing holds. `VITE_SITES` is a comma-separated `id=name` list and defaults to `site-1=Site 1`.
+- `bun run build:replay` builds Replay into `web/dist/`, and `bun run preview` serves it. `VITE_BASE_URL` sets the base path when the build is hosted under a subpath.
+- The design spacing steps are Tailwind v4 theme tokens named `xs` to `xl`, so a sizing utility sharing a name, such as `max-w-sm`, resolves to the spacing value (8px) rather than the container width. Size widths with an arbitrary value such as `max-w-[24rem]`.
+- `bun run test:e2e` builds Replay, serves it, and runs the Playwright specs against it. The compose spec `web/e2e/lane-decision.spec.ts` skips unless `WASHGATE_STACK_URL` points at the running `web` service, such as `http://localhost:8090`, and it posts the plate reader's fixture photo to `PLATE_READER_URL` (default `http://localhost:8000`).
 
 ## Scripts
 

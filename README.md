@@ -24,7 +24,7 @@ Scaffolded, not yet working end to end. Each component builds and passes its che
 - **Central**: stores each site wash once and opens a Stripe test-mode Checkout for Premium, applying each Stripe event once. Stripe stays off until a test key is set. Operators can look up a plate, reset a Premium plate's monthly quota, which reaches every site on its next pull, and list sites with their last sync.
 - **Invoicing**: serves a month of fleet washes as CSV at `GET /invoices/<YYYY-MM>.csv`, with `?split=leasing` grouping by leasing company.
 - **washctl**: looks up a plate, resets a Premium quota, fetches a month's fleet invoice, and shows each site's sync state, by calling central, invoicing, and the site agents over HTTP. `WASHCTL_*` variables say where each answers.
-- **Dashboard**: not built yet.
+- **Dashboard**: shows each car's photo, plate read, decision, and backend trace, the staff prompt, site health with a link switch, and a plate lookup. Compose serves it at `localhost:8090`. The lane feed and staff routes it reads on the site agent are not built yet, so the live view has no cars to show. A Replay build plays a recorded run with no backend: `(cd web && bun run build:replay && bun run preview)`.
 
 ## Setup
 

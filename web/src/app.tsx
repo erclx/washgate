@@ -1,10 +1,5 @@
-function App() {
-  return (
-    <main>
-      <h1>washgate</h1>
-      <p>Lane decisions and backend trace for a staffed car wash.</p>
-    </main>
-  )
-}
+import { LaneDashboard } from '@/features/lane-dashboard/lane-dashboard'
 
-export default App
+export function App() {
+  return <LaneDashboard />
+}

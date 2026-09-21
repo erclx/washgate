@@ -38,6 +38,7 @@ All jobs across the workflows below must pass before merge.
 | Invoicing    | `invoicing/`    | `composer install`, then `lint`, `typecheck`, `test:run` |
 | Plate reader | `plate-reader/` | `uv sync --frozen`, then `lint`, `typecheck`, `test:run` |
 | Web          | `web/`          | `typecheck`, `lint`, `test:coverage`, `build`            |
+| Web E2E      | `web/`          | `playwright install --with-deps`, then `test:e2e`        |
 
 The core job runs a `mariadb:11.8` service with a health check and sets `CENTRAL_TEST_DSN` to its root user, so the central integration tests run on every pull request instead of skipping. The invoicing job runs the same service and sets `INVOICING_TEST_DSN`, `INVOICING_TEST_USER`, and `INVOICING_TEST_PASSWORD` to its root user.
 
@@ -50,4 +51,4 @@ The core job runs a `mariadb:11.8` service with a health check and sets `CENTRAL
 ## Decisions
 
 - Component jobs live in `components.yml` rather than in `verify.yml`, because `verify.yml` is a golden file a canon sync overwrites.
-- End to end tests for `web/` are not in CI yet. Add a job once the first real spec exists.
+- End to end tests for `web/` run in their own job rather than as steps of the web job. `test:e2e` builds the Replay bundle and serves it, so the job needs no backend, and it caches browsers keyed on the Playwright version. The compose spec skips there, since CI starts no stack.
