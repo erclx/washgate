@@ -1,6 +1,6 @@
 # Project
 
-washgate models the entry decision at a staffed car wash: a plate is read at the lane, the site decides admit, deny, or ask staff, and every wash is counted once and billed correctly. A monorepo of Go services, a PHP invoicing service, a Python plate reader, and a React dashboard over MariaDB and SQLite.
+washgate models the entry decision at a staffed car wash: a plate is read at the lane, the site decides admit, pay, or ask staff, and every wash is counted once and billed correctly. A monorepo of Go services, a PHP invoicing service, a Python plate reader, and a React dashboard over MariaDB and SQLite.
 
 ## Context
 

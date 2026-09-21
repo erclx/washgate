@@ -8,7 +8,7 @@ washgate is a working model of that system, built to show how the backend stays 
 
 ## Goals
 
-- A car at the lane gets a decision at once: admit, deny, or ask staff, with the reason shown.
+- A car at the lane gets a decision at once: admit, pay, or ask staff, with the reason shown.
 - Every wash is counted exactly once, whatever the camera, the network, or the payment provider repeats.
 - A site keeps admitting cars while offline and reconciles with head office when the link returns.
 - A plate read the system is unsure of goes to the staff on the lane rather than being guessed.

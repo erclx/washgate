@@ -8,6 +8,7 @@ alpr
 analyse
 asyncio
 autoloaded
+bigfft
 bradlc
 bunx
 canon
@@ -36,11 +37,17 @@ httpx
 imdecode
 imencode
 imread
+isatty
+libc
 lintstagedrc
+mathutil
+mattn
 mbstring
 mkhl
+modernc
 monkeypatch
 mypy
+ncruces
 networkidle
 nolint
 numpy
@@ -55,6 +62,7 @@ pyproject
 pytest
 pythonpath
 regen
+remyoudompheng
 repr
 scannability
 scrollend
@@ -62,6 +70,7 @@ setattr
 shellcheck
 shfmt
 shivammathur
+strftime
 strtotime
 subfolders
 testdox
