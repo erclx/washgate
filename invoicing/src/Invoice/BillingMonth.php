@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Washgate\Invoicing;
+namespace Washgate\Invoicing\Invoice;
 
 use DateTimeImmutable;
 use DateTimeZone;
@@ -38,5 +38,17 @@ final class BillingMonth
     public function lastDay(): DateTimeImmutable
     {
         return $this->firstDay->modify('last day of this month');
+    }
+
+    /** The first instant of the month, the inclusive start of its range. */
+    public function startUtc(): DateTimeImmutable
+    {
+        return $this->firstDay->setTimezone(new DateTimeZone('UTC'));
+    }
+
+    /** The first instant of the next month, the exclusive end of its range. */
+    public function endUtc(): DateTimeImmutable
+    {
+        return $this->firstDay->modify('first day of next month')->setTimezone(new DateTimeZone('UTC'));
     }
 }
