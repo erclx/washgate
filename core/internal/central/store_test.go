@@ -1,7 +1,9 @@
 package central
 
 import (
+	"crypto/rand"
 	"errors"
+	"os"
 	"slices"
 	"testing"
 	"time"
@@ -39,6 +41,16 @@ func addSite(t *testing.T, database *testdb.Database, id string) {
 	if _, err := database.SQL.ExecContext(t.Context(), "INSERT INTO sites (id, name) VALUES (?, ?)", id, "Test site"); err != nil {
 		t.Fatalf("add site: %v", err)
 	}
+}
+
+// provisionSite registers siteID the way central's startup does and returns the token it now answers to.
+func provisionSite(t *testing.T, store *Store, siteID string) string {
+	t.Helper()
+	token := rand.Text() + rand.Text()
+	if err := store.ProvisionSites(t.Context(), []SiteToken{{SiteID: siteID, Token: token}}); err != nil {
+		t.Fatalf("provision site: %v", err)
+	}
+	return token
 }
 
 func addCompany(t *testing.T, database *testdb.Database, id, name string) {
@@ -331,6 +343,125 @@ func TestEntitlementChanges(t *testing.T) {
 			t.Fatalf("second page = %v, want CCC333", got)
 		}
 	})
+}
+
+func TestProvisionSites(t *testing.T) {
+	t.Run("provisioning twice leaves one row per site answering to the latest token", func(t *testing.T) {
+		store, database := newTestStore(t)
+		firstToken := provisionSite(t, store, testSiteID)
+		latestToken := provisionSite(t, store, testSiteID)
+
+		siteID, err := store.SiteForToken(t.Context(), hashSiteToken(latestToken))
+
+		if err != nil || siteID != testSiteID {
+			t.Fatalf("site for latest token = %q, error %v, want %q", siteID, err, testSiteID)
+		}
+		if _, err := store.SiteForToken(t.Context(), hashSiteToken(firstToken)); !errors.Is(err, ErrUnknownToken) {
+			t.Fatalf("error for replaced token = %v, want ErrUnknownToken", err)
+		}
+		var sites int
+		if err := database.SQL.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sites").Scan(&sites); err != nil {
+			t.Fatalf("count sites: %v", err)
+		}
+		if sites != 1 {
+			t.Fatalf("sites = %d, want 1", sites)
+		}
+	})
+
+	t.Run("a token a dropped site still holds moves to the site now named with it", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		token := provisionSite(t, store, "site-kista")
+
+		err := store.ProvisionSites(t.Context(), []SiteToken{{SiteID: testSiteID, Token: token}})
+
+		if err != nil {
+			t.Fatalf("provision site: %v", err)
+		}
+		if siteID, err := store.SiteForToken(t.Context(), hashSiteToken(token)); err != nil || siteID != testSiteID {
+			t.Fatalf("site for token = %q, error %v, want %q", siteID, err, testSiteID)
+		}
+	})
+
+	t.Run("keeps the name and sync time of a site central already holds", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addSite(t, database, testSiteID)
+		if _, err := store.RecordWashes(t.Context(), testSiteID, []Wash{premiumWash("w1", "ABC123")}); err != nil {
+			t.Fatalf("record washes: %v", err)
+		}
+
+		provisionSite(t, store, testSiteID)
+
+		var name string
+		var isSynced bool
+		err := database.SQL.QueryRowContext(t.Context(),
+			"SELECT name, last_synced_at IS NOT NULL FROM sites WHERE id = ?", testSiteID,
+		).Scan(&name, &isSynced)
+		if err != nil {
+			t.Fatalf("read site: %v", err)
+		}
+		if name != "Test site" || !isSynced {
+			t.Fatalf("name %q synced %v, want the original name and a sync time", name, isSynced)
+		}
+	})
+}
+
+func TestSiteForToken(t *testing.T) {
+	t.Run("a token no site holds is unknown", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		provisionSite(t, store, testSiteID)
+
+		_, err := store.SiteForToken(t.Context(), hashSiteToken(rand.Text()+rand.Text()))
+
+		if !errors.Is(err, ErrUnknownToken) {
+			t.Fatalf("error = %v, want ErrUnknownToken", err)
+		}
+	})
+
+	t.Run("a site with no token answers to no hash", func(t *testing.T) {
+		store, database := newTestStore(t)
+		addSite(t, database, testSiteID)
+
+		_, err := store.SiteForToken(t.Context(), [32]byte{})
+
+		if !errors.Is(err, ErrUnknownToken) {
+			t.Fatalf("error = %v, want ErrUnknownToken", err)
+		}
+	})
+}
+
+func TestSiteTokensDownMigrationRestoresSites(t *testing.T) {
+	database := testdb.New(t)
+	statements, err := os.ReadFile("../../migrations/0003_site_tokens.down.sql")
+	if err != nil {
+		t.Fatalf("read down migration: %v", err)
+	}
+
+	if _, err := database.SQL.ExecContext(t.Context(), string(statements)); err != nil {
+		t.Fatalf("apply down migration: %v", err)
+	}
+
+	rows, err := database.SQL.QueryContext(t.Context(),
+		"SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'sites' ORDER BY ordinal_position",
+		database.Name,
+	)
+	if err != nil {
+		t.Fatalf("read sites columns: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	columns := []string{}
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		columns = append(columns, column)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate columns: %v", err)
+	}
+	if want := []string{"id", "name", "last_synced_at"}; !slices.Equal(columns, want) {
+		t.Fatalf("sites columns = %v, want %v", columns, want)
+	}
 }
 
 func TestDownMigrationDropsEveryTable(t *testing.T) {
