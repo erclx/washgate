@@ -34,6 +34,7 @@ goroutines
 httptest
 httpx
 imdecode
+imencode
 imread
 lintstagedrc
 mbstring
@@ -66,6 +67,7 @@ subfolders
 testdox
 testpaths
 timonwong
+tobytes
 toplevel
 unconfigured
 unparseable

@@ -12,8 +12,8 @@ class PlateReader(Protocol):
 
 
 class AlprReader:
-    def __init__(self) -> None:
-        self.alpr = ALPR(
+    def __init__(self, alpr: ALPR | None = None) -> None:
+        self.alpr = alpr or ALPR(
             detector_model='yolo-v9-t-384-license-plate-end2end',
             ocr_model='cct-xs-v2-global-model',
         )
@@ -27,9 +27,12 @@ class AlprReader:
             return None
         best = max(results, key=lambda result: result.detection.confidence)
         assert best.ocr is not None
+        plate = best.ocr.text.replace(' ', '').upper()
+        if not plate:
+            return None
         box = best.detection.bounding_box
         return PlateRead(
-            plate=best.ocr.text.replace(' ', '').upper(),
+            plate=plate,
             confidence=_average(best.ocr.confidence),
             box=BoundingBox(x1=box.x1, y1=box.y1, x2=box.x2, y2=box.y2),
         )

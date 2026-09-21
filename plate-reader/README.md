@@ -11,16 +11,16 @@ uv run uvicorn --factory plate_reader.app:create_default_app --port 8000
 
 The first read downloads the model weights, so it needs network once.
 
-| Variable         | Default | Meaning                                                            |
-| ---------------- | ------- | ------------------------------------------------------------------ |
-| `SITE_AGENT_URL` | unset   | Where each read is posted. Unset skips the send and logs one line. |
+| Variable         | Default | Meaning                                                                                                                   |
+| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SITE_AGENT_URL` | unset   | Where each read is posted, path included, such as `http://site-agent:8080/reads`. Unset skips the send and logs one line. |
 
 ## Request
 
-`POST /read` with a multipart form carrying the photo in the `image` field, up to 10 MiB.
+`POST /read` with the raw photo as the body and `Content-Type: image/jpeg`, up to 10 MiB. The body is read as a stream and decoded from memory, so nothing is spooled to disk.
 
 ```bash
-curl -F image=@lane.jpg http://localhost:8000/read
+curl -H 'Content-Type: image/jpeg' --data-binary @lane.jpg http://localhost:8000/read
 ```
 
 ## Response and send-on
@@ -35,13 +35,13 @@ The response and the send-on body are the same JSON:
 }
 ```
 
-`confidence` is the OCR confidence for the plate with the highest detection confidence in the photo, averaged over characters. The reader returns it raw and never decides admit, deny, or ask staff. That cutoff belongs to the site.
+`confidence` is the OCR confidence for the plate with the highest detection confidence in the photo, averaged over characters. The reader returns it raw and never decides admit, pay, or staff. That cutoff belongs to the site.
 
 | Status | Meaning                            |
 | ------ | ---------------------------------- |
 | 200    | A plate was read                   |
 | 404    | No plate found, nothing is sent on |
 | 413    | The image exceeds the size limit   |
-| 422    | No `image` field in the request    |
+| 422    | The request body is empty          |
 
 A send-on that fails after its retries is logged and does not change the response.

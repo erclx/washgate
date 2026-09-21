@@ -7,7 +7,6 @@ requires-python = ">=3.14"
 dependencies = [
     "fast-alpr[onnx]>=0.4.0",
     "fastapi>=0.141.1",
-    "python-multipart>=0.0.32",
     "uvicorn>=0.53.0",
 ]
 
