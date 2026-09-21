@@ -29,10 +29,11 @@ A site agent decides entry from its own SQLite copy and never asks central mid-d
 
 ### Change log
 
-- Every write that changes a plate's plan or its company appends a row to `entitlement_changes` in the same transaction. The writer first takes the single `entitlement_cursor` row with `FOR UPDATE`.
+- Every write that changes a plate's plan, its company, or its quota reset appends a row to `entitlement_changes` in the same transaction. The writer first takes the single `entitlement_cursor` row with `FOR UPDATE`.
 - The lock exists because an auto-increment `seq` can be handed out before an earlier transaction commits. A site pulling in that gap would move past a change it never saw. With the lock, changes commit in `seq` order.
 - Every writer takes the cursor before any subscription row, so two writers cannot deadlock.
-- A write to `vehicles` that changes no entitlement appends nothing, because a site holds only Premium and fleet plates.
+- A write to `vehicles` that changes none of the three appends nothing, because a site holds only Premium and fleet plates and their resets.
+- A quota reset appends a change that keeps the plan `premium` and carries `quota_reset_at`. It is the one change that alters neither plan nor company. The site writes the instant to its `quota_resets` table, kept apart from `vehicles` so a later plan rewrite cannot erase it, and only ever moves it forward. A change replayed out of order cannot undo a later reset.
 - A paid renewal appends a change that alters nothing, carrying the same plan. The site applies every change as an upsert, so the repeat is harmless, and central needs no rule to tell a first payment from a renewal.
 - A change with no plan revokes the plate, and the site deletes the vehicle. A fleet change carries the company name, which the site writes as an insert or update, so it never needs a second call to show it.
 - The site applies a whole page and moves its cursor and pull time in one transaction, so a change it cannot apply leaves the copy as it was.
@@ -70,4 +71,4 @@ Central and the site number their schema differently, and the difference bites w
 
 ## Adding a change type
 
-A new write to `vehicles` or `subscriptions` that alters a plate's plan or company goes through `lockEntitlementCursor` and `appendEntitlementChange` in `core/internal/central/store.go`, inside the transaction that makes the write. Add a site-side case in `applyChange` in `core/internal/siteagent/store.go` only if the change shape is new.
+A new write that alters a plate's plan, company, or quota reset goes through `lockEntitlementCursor` and `appendEntitlementChange` in `core/internal/central/store.go`, inside the transaction that makes the write. `ResetQuota` in `core/internal/central/operator_store.go` is the example for a change that carries a new field. Add a site-side case in `applyChange` in `core/internal/siteagent/store.go` only if the change shape is new, and a column on `entitlement_changes` in a new central migration.

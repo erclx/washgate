@@ -14,7 +14,7 @@ A plate is the key every other domain looks a car up by, so one string has to co
 - `plate-reader/src/plate_reader/` owns the reader, the send-on to the site agent, and the response models
 - `plate-reader/tests/fixtures/` owns the public test image and its attribution
 - `core/internal/siteagent/` owns the normalization rule the lane uses
-- `core/internal/central/` owns central's own copies of the rule, at checkout and at the ledger
+- `core/internal/central/` owns central's own copies of the rule, at checkout, at the ledger, and on the operator routes
 
 ## Normalization
 
@@ -31,11 +31,12 @@ The rule is deliberately loose. Personalized plates run two to seven letters or 
 - `core/internal/siteagent/plate.go` holds the full rule, `NormalizePlate`
 - `core/internal/central/checkout.go` holds the taxi rule again, so a taxi's Premium is sold under the key the lane looks up
 - `core/internal/central/store.go` holds the shape check again as `normalizedPlate`, so central refuses to store a plate no lane could look up
+- `core/internal/central/operator.go` holds the full rule again as `canonicalPlate`, for the operator routes
 - `plate-reader/src/plate_reader/reader.py` upper-cases and drops spaces only. It drops hyphens and applies the shape check nowhere, so a hyphen reaches the site agent and is removed there
 
 Components cannot share the rule. The reader is Python, and the Go components keep to `internal/<component>/` with no imports between them, so a change to the rule is a change in each copy. The site and central must agree on the shape and on the taxi rule.
 
-Central is stricter about input than the lane. Checkout trims and upper-cases a plate but does not drop inner spaces or hyphens, so `ABC 123` answers 400 there while the lane would read it as `ABC123`. Callers of central send the normalized form.
+Central's routes differ in how much they normalize. The operator routes run `canonicalPlate`, so `ABC 123` reaches the same key the lane uses. Checkout only trims and upper-cases before it applies the taxi rule, so `ABC 123` answers 400 there while the lane would read it as `ABC123`. A caller of checkout sends the normalized form.
 
 ## Confidence
 
