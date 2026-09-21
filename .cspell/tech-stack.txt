@@ -26,12 +26,14 @@ errexit
 esac
 esbenp
 fastapi
+filippo
 friendsofphp
 frombuffer
 frontmatter
 golangci
 goroutine
 goroutines
+gosec
 httptest
 httpx
 imdecode

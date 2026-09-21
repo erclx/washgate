@@ -3,10 +3,13 @@ package central
 
 import "net/http"
 
-// NewRouter returns the central API's HTTP handler.
-func NewRouter() http.Handler {
+// NewRouter returns the central API's HTTP handler over store.
+func NewRouter(store *Store) http.Handler {
+	ledger := &ledger{store: store}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
+	mux.HandleFunc("POST /washes", ledger.handlePostWashes)
+	mux.HandleFunc("GET /entitlements", ledger.handleGetEntitlements)
 	return mux
 }
 
