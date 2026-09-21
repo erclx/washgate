@@ -67,6 +67,22 @@ jobs:
     defaults:
       run:
         working-directory: invoicing
+    env:
+      INVOICING_TEST_DSN: mysql:host=127.0.0.1;port=3306
+      INVOICING_TEST_USER: root
+      INVOICING_TEST_PASSWORD: root
+    services:
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
