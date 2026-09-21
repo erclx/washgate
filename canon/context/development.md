@@ -33,6 +33,7 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 - `docker compose up --build` starts MariaDB, runs the `migrate` step, then starts central once the step exits cleanly. Use `--build` so a changed central image is never served from a stale layer.
 - `core/migrations/` holds numbered `.up.sql` and `.down.sql` pairs. `scripts/migrate.sh` applies each unrecorded `.up.sql` in name order and records it in `schema_migrations`.
 - `docker compose run --rm migrate down` rolls back the latest recorded migration.
+- The `seed` service applies `core/seed/demo.sql` once `migrate` exits cleanly: three demo customers with display names and no cars, and the `premium`, `single_wash`, and `fleet_wash` prices. Every insert updates a row it finds in place, so each `up` reruns it harmlessly, and `docker compose run --rm seed` reapplies it by hand. The seed never runs against a test database, and it writes no `vehicles` or `subscriptions` row, so it needs no entitlement change.
 - Connection settings are the `DB_*` variables in `.env.example`. The compose files fall back to the same defaults when a variable is unset.
 - MariaDB commits DDL implicitly, so a migration failing halfway leaves a partial schema. Keep one statement per file or use `IF NOT EXISTS`. A check constraint takes it before its name, `ADD CONSTRAINT IF NOT EXISTS <name> CHECK (...)`, and a foreign key takes it after the keyword, `ADD CONSTRAINT <name> FOREIGN KEY IF NOT EXISTS (...)`. The check's spelling is a syntax error on a foreign key.
 - Data lives in the `mariadb-data` volume and the site agent's `site-data` volume. `docker compose down -v` is the one command that drops them.
@@ -46,7 +47,8 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 - Parallel worktree sessions each start their own throwaway MariaDB for these tests rather than sharing compose's 3306: `docker run -d --name washgate-<topic>-test -e MARIADB_ROOT_PASSWORD=washgate-root -p 127.0.0.1:<free port>:3306 mariadb:11.8`, with `CENTRAL_TEST_DSN` pointed at that port.
 - `core/internal/testdb` gives each test its own database with every migration applied and drops it afterwards.
 - Central's Stripe routes, `POST /checkout`, `POST /checkout/single-wash`, and `POST /stripe/webhook`, answer 503 until `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are both set, so the stack starts with no Stripe account. Central exits on a key that is not `sk_test_` or `rk_test_`. `docker compose --profile stripe up` adds the `stripe-cli` forwarder.
-- `POST /checkout/single-wash` answers 503 on a fresh database until a `single_wash` row is in force in `prices`, the same gap `premium` has, since nothing seeds either.
+- The customer routes take no token either, for the same loopback reason, with the demo customer picker standing in for a login. `GET /customers` lists each customer's id, display name, and cars with their plan. `GET /customers/{id}/cars` answers each car's plan, `washes_used` since the later of the month start and the latest quota reset, `monthly_cap`, `resets_on` as a Stockholm date, and `prepaid_washes_ready`. `GET /customers/{id}/cars/{plate}` adds this month's washes.
+- `POST /customers/{id}/cars` with `{"plate": "..."}` registers a plate, answering 201 for a new one, 200 for one the customer already holds, and 409 for one another owner holds. Registering appends no entitlement change, since a plate with no plan changes nothing a site holds.
 
 ### Site agent
 
