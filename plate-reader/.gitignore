@@ -4,3 +4,7 @@
 .mypy_cache/
 .ruff_cache/
 .coverage_cache/
+
+# Bytecode
+__pycache__/
+*.pyc
