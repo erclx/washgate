@@ -11,8 +11,9 @@ import (
 
 const maxReadBodyBytes = 4 << 10
 
-// Config holds what the router needs beyond the store: thresholds, the site's time zone, and a clock.
+// Config holds what the router needs beyond the store: the site's id, thresholds, the site's time zone, and a clock.
 type Config struct {
+	SiteID   string
 	Policy   Policy
 	Location *time.Location
 	Now      func() time.Time
@@ -24,7 +25,37 @@ func NewRouter(store *Store, config Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("POST /reads", lane.handleRead)
+	mux.HandleFunc("GET /status", lane.handleStatus)
 	return mux
+}
+
+type statusResponse struct {
+	SiteID       string     `json:"site_id"`
+	OutboxDepth  int        `json:"outbox_depth"`
+	LastSyncedAt *time.Time `json:"last_synced_at"`
+}
+
+// handleStatus reports what only the site knows about its link to central: the washes central has not
+// acknowledged and when the copy last pulled.
+func (l *lane) handleStatus(w http.ResponseWriter, r *http.Request) {
+	depth, err := l.store.OutboxDepth(r.Context())
+	if err != nil {
+		slog.Error("site status failed", "site_id", l.config.SiteID, "error", err)
+		http.Error(w, "the site could not read its status", http.StatusInternalServerError)
+		return
+	}
+	lastPulledAt, err := l.store.LastPulledAt(r.Context())
+	if err != nil {
+		slog.Error("site status failed", "site_id", l.config.SiteID, "error", err)
+		http.Error(w, "the site could not read its status", http.StatusInternalServerError)
+		return
+	}
+	response := statusResponse{SiteID: l.config.SiteID, OutboxDepth: depth}
+	if !lastPulledAt.IsZero() {
+		response.LastSyncedAt = &lastPulledAt
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 type lane struct {

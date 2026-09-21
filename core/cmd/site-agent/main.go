@@ -83,6 +83,7 @@ func run(ctx context.Context) error {
 	server := &http.Server{
 		Addr: address,
 		Handler: siteagent.NewRouter(store, siteagent.Config{
+			SiteID:   siteID,
 			Policy:   siteagent.Policy{MinConfidence: minConfidence, DedupWindow: dedupWindow, MaxOffline: maxOffline},
 			Location: location,
 			Now:      time.Now,
