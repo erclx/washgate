@@ -55,6 +55,16 @@ A branch writes only its own component's entries: its `compose.yaml`, its sectio
 - `GET /status` on the site agent answers `site_id`, `outbox_depth`, and `last_synced_at`, the time of the last good pull, so a backlog shows while central is out of reach.
 - The site applies `core/internal/siteagent/schema/` by `PRAGMA user_version`, each file in one transaction at startup. SQLite cannot alter a check, so a change to one rebuilds the table. `outbox` references `washes`, so a `washes` rebuild copies the outbox rows to a temp table, empties `outbox`, drops and renames `washes`, then copies the rows back. With foreign keys on, `DROP TABLE washes` otherwise fails on the outbox rows, and `PRAGMA foreign_keys` cannot change inside the migration's transaction.
 
+### washctl
+
+- `washctl` calls central, invoicing, and the site agents over HTTP and touches no database. Run it with `go run ./cmd/washctl <command>` from `core/`. It writes results to stdout and problems to stderr, and exits 1 when a call fails and 2 on a usage error.
+- `WASHCTL_CENTRAL_URL` (default `http://127.0.0.1:8080`), `WASHCTL_INVOICING_URL` (default `http://127.0.0.1:8082`), and `WASHCTL_SITE_URLS` as `site-1=http://127.0.0.1:8081,site-2=http://...` (default is `site-1` alone) say where each service answers. A malformed value stops the command before any call.
+- `washctl plate [--json] <plate>` shows the owner, plan, leasing company, and washes this month with the count since the last reset.
+- `washctl quota-reset [--note text] <plate>` records a reset under a generated id, retried with the same id, so a lost answer changes nothing. A site applies it at its next pull.
+- `washctl invoice [--split leasing] [-o file] <YYYY-MM>` writes the month's CSV to stdout or the file, and writes nothing when invoicing refuses.
+- `washctl health [--json]` prints one row per site central knows, with central's last sync, the site's outbox depth, and its last pull. A site that does not answer, or has no URL configured, shows that instead of failing the command.
+- `core/operatorflow/` runs the CLI against central's router over MariaDB and skips without `CENTRAL_TEST_DSN`.
+
 ### Invoicing
 
 - The invoicing MariaDB tests read `INVOICING_TEST_DSN`, `INVOICING_TEST_USER`, and `INVOICING_TEST_PASSWORD` and skip when the DSN is unset. Copy the three from `.env.example`. `invoicing/tests/Database/TemporaryDatabase.php` applies `core/migrations/*.up.sql` to a per-test database, so a schema change in Go reaches the PHP tests.
