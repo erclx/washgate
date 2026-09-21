@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 const (
@@ -18,11 +19,12 @@ type entitlementChangesResponse struct {
 }
 
 type entitlementChangeResponse struct {
-	Seq         int64   `json:"seq"`
-	Plate       string  `json:"plate"`
-	Plan        *string `json:"plan"`
-	CompanyID   *string `json:"company_id"`
-	CompanyName *string `json:"company_name"`
+	Seq          int64      `json:"seq"`
+	Plate        string     `json:"plate"`
+	Plan         *string    `json:"plan"`
+	CompanyID    *string    `json:"company_id"`
+	CompanyName  *string    `json:"company_name"`
+	QuotaResetAt *time.Time `json:"quota_reset_at"`
 }
 
 func (l *ledger) handleGetEntitlements(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +47,12 @@ func (l *ledger) handleGetEntitlements(w http.ResponseWriter, r *http.Request) {
 	response := entitlementChangesResponse{Changes: make([]entitlementChangeResponse, 0, len(changes)), Next: after}
 	for _, change := range changes {
 		response.Changes = append(response.Changes, entitlementChangeResponse{
-			Seq:         change.Seq,
-			Plate:       change.Plate,
-			Plan:        optionalString(string(change.Plan)),
-			CompanyID:   optionalString(change.CompanyID),
-			CompanyName: optionalString(change.CompanyName),
+			Seq:          change.Seq,
+			Plate:        change.Plate,
+			Plan:         optionalString(string(change.Plan)),
+			CompanyID:    optionalString(change.CompanyID),
+			CompanyName:  optionalString(change.CompanyName),
+			QuotaResetAt: optionalTime(change.QuotaResetAt),
 		})
 		response.Next = change.Seq
 	}
@@ -71,6 +74,13 @@ func parseQueryNumber(raw string, fallback, minimum int64) (int64, bool) {
 
 func optionalString(value string) *string {
 	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func optionalTime(value time.Time) *time.Time {
+	if value.IsZero() {
 		return nil
 	}
 	return &value

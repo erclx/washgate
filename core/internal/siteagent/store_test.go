@@ -419,7 +419,7 @@ func TestStoreReopensAnExistingCopyWithoutReapplyingItsSchema(t *testing.T) {
 func TestSchemaDownMigrationsDropEveryTable(t *testing.T) {
 	store := openSeededStore(t)
 	recordWash(t, store, "ABC123", testNow)
-	downs := []string{"schema/002_sync.down.sql", "schema/001_init.down.sql"}
+	downs := []string{"schema/003_quota.down.sql", "schema/002_sync.down.sql", "schema/001_init.down.sql"}
 
 	for _, name := range downs {
 		down, err := schemaFiles.ReadFile(name)
@@ -440,4 +440,75 @@ func TestSchemaDownMigrationsDropEveryTable(t *testing.T) {
 	if remaining != 0 {
 		t.Errorf("schema objects left = %d, want 0", remaining)
 	}
+}
+
+func resetChange(seq int64, plate string, resetAt time.Time) EntitlementChange {
+	return EntitlementChange{Seq: seq, Plate: plate, Plan: PlanPremium, QuotaResetAt: resetAt}
+}
+
+func applyChanges(t *testing.T, store *Store, changes ...EntitlementChange) {
+	t.Helper()
+	if err := store.ApplyChanges(t.Context(), changes, changes[len(changes)-1].Seq, testNow); err != nil {
+		t.Fatalf("apply changes: %v", err)
+	}
+}
+
+func washesCountedTowardTheCap(t *testing.T, store *Store, plate string) int {
+	t.Helper()
+	facts, err := store.Facts(t.Context(), plate, MonthStart(testNow, time.UTC))
+	if err != nil {
+		t.Fatalf("read facts: %v", err)
+	}
+	return facts.WashesThisMonth
+}
+
+func TestStoreQuotaReset(t *testing.T) {
+	t.Run("washes before a reset this month stop counting toward the cap", func(t *testing.T) {
+		store := openSeededStore(t)
+		recordWash(t, store, "ABC123", testNow.Add(-2*time.Hour))
+		applyChanges(t, store, resetChange(6, "ABC123", testNow.Add(-time.Hour)))
+
+		recordWash(t, store, "ABC123", testNow)
+
+		if got := washesCountedTowardTheCap(t, store, "ABC123"); got != 1 {
+			t.Errorf("washes counted = %d, want 1", got)
+		}
+	})
+
+	t.Run("a reset from last month changes nothing", func(t *testing.T) {
+		store := openSeededStore(t)
+		monthStart := MonthStart(testNow, time.UTC)
+		applyChanges(t, store, resetChange(6, "ABC123", monthStart.Add(-time.Hour)))
+
+		recordWash(t, store, "ABC123", monthStart.Add(time.Hour))
+		recordWash(t, store, "ABC123", testNow)
+
+		if got := washesCountedTowardTheCap(t, store, "ABC123"); got != 2 {
+			t.Errorf("washes counted = %d, want 2", got)
+		}
+	})
+
+	t.Run("a later plan change keeps the reset", func(t *testing.T) {
+		store := openSeededStore(t)
+		recordWash(t, store, "ABC123", testNow.Add(-2*time.Hour))
+		applyChanges(t, store, resetChange(6, "ABC123", testNow.Add(-time.Hour)))
+
+		applyChanges(t, store, premiumChange(7, "ABC123"))
+
+		if got := washesCountedTowardTheCap(t, store, "ABC123"); got != 0 {
+			t.Errorf("washes counted = %d, want 0", got)
+		}
+	})
+
+	t.Run("an older reset arriving later does not move the reset back", func(t *testing.T) {
+		store := openSeededStore(t)
+		recordWash(t, store, "ABC123", testNow.Add(-2*time.Hour))
+		applyChanges(t, store, resetChange(6, "ABC123", testNow.Add(-time.Hour)))
+
+		applyChanges(t, store, resetChange(7, "ABC123", testNow.Add(-3*time.Hour)))
+
+		if got := washesCountedTowardTheCap(t, store, "ABC123"); got != 0 {
+			t.Errorf("washes counted = %d, want 0", got)
+		}
+	})
 }

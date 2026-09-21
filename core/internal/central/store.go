@@ -113,13 +113,15 @@ type Entitlement struct {
 	CompanyID  string
 }
 
-// EntitlementChange is one entry in the log sites pull their copy from.
+// EntitlementChange is one entry in the log sites pull their copy from. A non-zero QuotaResetAt tells
+// each site to count the plate's monthly cap from that instant.
 type EntitlementChange struct {
-	Seq         int64
-	Plate       string
-	Plan        Plan
-	CompanyID   string
-	CompanyName string
+	Seq          int64
+	Plate        string
+	Plan         Plan
+	CompanyID    string
+	CompanyName  string
+	QuotaResetAt time.Time
 }
 
 // Store is central's MariaDB ledger of sites, entitlements, and washes.
@@ -509,9 +511,10 @@ func lockEntitlementCursor(ctx context.Context, tx *sql.Tx) error {
 // appendEntitlementChange adds change to the log sites pull. The caller holds the cursor lock.
 func appendEntitlementChange(ctx context.Context, tx *sql.Tx, change EntitlementChange) error {
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO entitlement_changes (plate, plan, company_id, company_name, changed_at)
-		VALUES (?, ?, ?, ?, UTC_TIMESTAMP(6))`,
+		`INSERT INTO entitlement_changes (plate, plan, company_id, company_name, quota_reset_at, changed_at)
+		VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(6))`,
 		change.Plate, nullableString(string(change.Plan)), nullableString(change.CompanyID), nullableString(change.CompanyName),
+		nullableTime(change.QuotaResetAt),
 	); err != nil {
 		return fmt.Errorf("append entitlement change: %w", err)
 	}
@@ -521,7 +524,7 @@ func appendEntitlementChange(ctx context.Context, tx *sql.Tx, change Entitlement
 // EntitlementChanges reads up to limit changes after the cursor, oldest first.
 func (s *Store) EntitlementChanges(ctx context.Context, after int64, limit int) ([]EntitlementChange, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT seq, plate, plan, company_id, company_name FROM entitlement_changes
+		`SELECT seq, plate, plan, company_id, company_name, quota_reset_at FROM entitlement_changes
 		WHERE seq > ? ORDER BY seq LIMIT ?`,
 		after, limit,
 	)
@@ -534,12 +537,14 @@ func (s *Store) EntitlementChanges(ctx context.Context, after int64, limit int) 
 	for rows.Next() {
 		var change EntitlementChange
 		var plan, companyID, companyName sql.NullString
-		if err := rows.Scan(&change.Seq, &change.Plate, &plan, &companyID, &companyName); err != nil {
+		var quotaResetAt sql.NullTime
+		if err := rows.Scan(&change.Seq, &change.Plate, &plan, &companyID, &companyName, &quotaResetAt); err != nil {
 			return nil, fmt.Errorf("scan entitlement change: %w", err)
 		}
 		change.Plan = Plan(plan.String)
 		change.CompanyID = companyID.String
 		change.CompanyName = companyName.String
+		change.QuotaResetAt = quotaResetAt.Time
 		changes = append(changes, change)
 	}
 	if err := rows.Err(); err != nil {
@@ -572,4 +577,8 @@ func isForeignKeyMissing(err error) bool {
 
 func nullableString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
+}
+
+func nullableTime(value time.Time) sql.NullTime {
+	return sql.NullTime{Time: value.UTC(), Valid: !value.IsZero()}
 }

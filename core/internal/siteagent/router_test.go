@@ -23,6 +23,7 @@ func newTestRouter(t *testing.T, store *Store, now time.Time) http.Handler {
 		t.Fatalf("load location: %v", err)
 	}
 	return NewRouter(store, Config{
+		SiteID:   testSiteID,
 		Policy:   testPolicy(),
 		Location: stockholm,
 		Now:      func() time.Time { return now },
@@ -238,4 +239,60 @@ func TestHealthReportsOK(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
+}
+
+type statusAnswer struct {
+	SiteID       string     `json:"site_id"`
+	OutboxDepth  int        `json:"outbox_depth"`
+	LastSyncedAt *time.Time `json:"last_synced_at"`
+}
+
+func getStatus(t *testing.T, router http.Handler) statusAnswer {
+	t.Helper()
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/status", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body %q", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var answer statusAnswer
+	if err := json.NewDecoder(recorder.Body).Decode(&answer); err != nil {
+		t.Fatalf("decode answer: %v", err)
+	}
+	return answer
+}
+
+func TestReadsAdmitsACappedPlateAgainAfterAReset(t *testing.T) {
+	store := openSeededStore(t)
+	recordFullMonth(t, store, "ABC123", MonthStart(testNow, time.UTC).Add(time.Hour))
+	applyChanges(t, store, resetChange(6, "ABC123", testNow.Add(-time.Minute)))
+	router := newTestRouter(t, store, testNow)
+
+	got := decodeAnswer(t, postRead(t, router, "application/json", `{"plate": "ABC123", "confidence": 1}`))
+
+	if got.Decision != "admit" || got.Reason != "within_cap" {
+		t.Errorf("answer = %+v, want admit within_cap after the reset", got)
+	}
+}
+
+func TestStatus(t *testing.T) {
+	t.Run("reports the site, its outbox depth, and its last pull", func(t *testing.T) {
+		store := openSeededStore(t)
+		recordWash(t, store, "ABC123", testNow)
+		recordWash(t, store, "KLM456", testNow)
+
+		got := getStatus(t, newTestRouter(t, store, testNow))
+
+		if got.SiteID != testSiteID || got.OutboxDepth != 2 || got.LastSyncedAt == nil || !got.LastSyncedAt.Equal(testNow) {
+			t.Errorf("status = %+v, want %s with depth 2 pulled at %v", got, testSiteID, testNow)
+		}
+	})
+
+	t.Run("a copy never pulled reports no sync time", func(t *testing.T) {
+		got := getStatus(t, newTestRouter(t, openStore(t), testNow))
+
+		if got.OutboxDepth != 0 || got.LastSyncedAt != nil {
+			t.Errorf("status = %+v, want an empty outbox and no sync time", got)
+		}
+	})
 }
