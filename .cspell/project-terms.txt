@@ -5,6 +5,7 @@ nakhon
 nord
 nordfrakt
 offlinesync
+operatorflow
 siteagent
 syncer
 testdb
