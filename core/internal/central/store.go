@@ -3,6 +3,7 @@ package central
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -26,6 +27,8 @@ var normalizedPlate = regexp.MustCompile(`^[A-Z0-9]{2,7}$`)
 var (
 	// ErrUnknownSite reports a batch from a site central does not know.
 	ErrUnknownSite = errors.New("unknown site")
+	// ErrUnknownToken reports a bearer token no site holds.
+	ErrUnknownToken = errors.New("unknown site token")
 	// ErrUnknownCompany reports a wash or an entitlement naming a company central does not know.
 	ErrUnknownCompany = errors.New("unknown company")
 	// ErrInvalidEntitlement reports an entitlement whose plan and owner do not pair, which no site could apply.
@@ -119,6 +122,50 @@ func Open(ctx context.Context, config Config) (*Store, error) {
 // Close releases the connection pool.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// ProvisionSites registers each site and the hash of the token it now answers to, in one transaction.
+// A site central already holds keeps its name and sync time and takes the new hash, and a site left out
+// of tokens keeps its row but can no longer authenticate.
+func (s *Store) ProvisionSites(ctx context.Context, tokens []SiteToken) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin site provisioning: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// The list is the whole set of sites that may authenticate. Clearing every hash first revokes a site left out,
+	// and keeps an upsert from landing on a stale row that still holds the same hash through the unique index.
+	if _, err := tx.ExecContext(ctx, "UPDATE sites SET token_sha256 = NULL"); err != nil {
+		return fmt.Errorf("revoke site tokens: %w", err)
+	}
+	for _, site := range tokens {
+		hash := hashSiteToken(site.Token)
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO sites (id, name, token_sha256) VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE token_sha256 = VALUES(token_sha256)`,
+			site.SiteID, site.SiteID, hash[:],
+		); err != nil {
+			return fmt.Errorf("provision site %s: %w", site.SiteID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit site provisioning: %w", err)
+	}
+	return nil
+}
+
+// SiteForToken finds the site whose token hashes to hash.
+func (s *Store) SiteForToken(ctx context.Context, hash [sha256.Size]byte) (string, error) {
+	var siteID string
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM sites WHERE token_sha256 = ?", hash[:]).Scan(&siteID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrUnknownToken
+	}
+	if err != nil {
+		return "", fmt.Errorf("read site for token: %w", err)
+	}
+	return siteID, nil
 }
 
 // RecordWashes stores each wash a site sent that central does not hold yet, in one transaction,

@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS sites_token_sha256 ON sites;
+
+ALTER TABLE sites DROP COLUMN IF EXISTS token_sha256;

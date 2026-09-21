@@ -53,6 +53,11 @@ func (l *ledger) handlePostWashes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, rejectedBatchReason, http.StatusBadRequest)
 		return
 	}
+	if siteID := authenticatedSite(r.Context()); batch.SiteID != siteID {
+		slog.Warn("wash batch refused", "site_id", siteID, "claimed_site_id", batch.SiteID, "reason", "site_id is another site's")
+		http.Error(w, "a site can push washes only under its own site_id", http.StatusForbidden)
+		return
+	}
 
 	washes := make([]Wash, 0, len(batch.Washes))
 	for _, wash := range batch.Washes {

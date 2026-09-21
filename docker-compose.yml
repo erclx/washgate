@@ -45,6 +45,8 @@ services:
       DB_NAME: ${DB_NAME:-washgate}
       DB_USER: ${DB_USER:-washgate}
       DB_PASSWORD: ${DB_PASSWORD:-washgate}
+      # Local development token, not a secret: the stack binds to 127.0.0.1 only
+      CENTRAL_SITE_TOKENS: site-1=${SITE_TOKEN:-local-dev-site-token-not-a-secret}
     ports:
       - '127.0.0.1:${CENTRAL_PORT:-8080}:8080'
     depends_on:
