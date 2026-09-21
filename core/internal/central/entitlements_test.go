@@ -48,7 +48,7 @@ func TestGetEntitlements(t *testing.T) {
 		store, _ := newTestStore(t)
 		token := provisionSite(t, store, testSiteID)
 
-		answer := decodeEntitlementsAnswer(t, getEntitlements(t, NewRouter(store), token, "?after=7"))
+		answer := decodeEntitlementsAnswer(t, getEntitlements(t, NewRouter(store, nil), token, "?after=7"))
 
 		if len(answer.Changes) != 0 || answer.Next != 7 {
 			t.Fatalf("answer = %+v, want no changes and next 7", answer)
@@ -61,7 +61,7 @@ func TestGetEntitlements(t *testing.T) {
 		putEntitlement(t, store, Entitlement{Plate: "BBB222", Plan: PlanPremium})
 		putEntitlement(t, store, Entitlement{Plate: "CCC333", Plan: PlanPremium})
 		token := provisionSite(t, store, testSiteID)
-		router := NewRouter(store)
+		router := NewRouter(store, nil)
 
 		firstPage := decodeEntitlementsAnswer(t, getEntitlements(t, router, token, "?limit=2"))
 		secondPage := decodeEntitlementsAnswer(t, getEntitlements(t, router, token, "?limit=2&after="+strconv.FormatInt(firstPage.Next, 10)))
@@ -81,7 +81,7 @@ func TestGetEntitlements(t *testing.T) {
 		putEntitlement(t, store, Entitlement{Plate: "FLT001"})
 		token := provisionSite(t, store, testSiteID)
 
-		answer := decodeEntitlementsAnswer(t, getEntitlements(t, NewRouter(store), token, ""))
+		answer := decodeEntitlementsAnswer(t, getEntitlements(t, NewRouter(store, nil), token, ""))
 
 		fleet, revoke := answer.Changes[0], answer.Changes[1]
 		if fleet.Plan == nil || *fleet.Plan != "fleet" || fleet.CompanyID == nil || *fleet.CompanyID != testCompanyID || fleet.CompanyName == nil || *fleet.CompanyName != testCompanyName {
@@ -97,7 +97,7 @@ func TestGetEntitlements(t *testing.T) {
 			store, _ := newTestStore(t)
 			token := provisionSite(t, store, testSiteID)
 
-			recorder := getEntitlements(t, NewRouter(store), token, query)
+			recorder := getEntitlements(t, NewRouter(store, nil), token, query)
 
 			if recorder.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
@@ -109,7 +109,7 @@ func TestGetEntitlements(t *testing.T) {
 		store, _ := newTestStore(t)
 		putEntitlement(t, store, Entitlement{Plate: "ABC123", Plan: PlanPremium})
 
-		recorder := getEntitlements(t, NewRouter(store), "", "")
+		recorder := getEntitlements(t, NewRouter(store, nil), "", "")
 
 		if recorder.Code != http.StatusUnauthorized || strings.Contains(recorder.Body.String(), "ABC123") {
 			t.Fatalf("status %d body %q, want 401 carrying no plate", recorder.Code, recorder.Body.String())

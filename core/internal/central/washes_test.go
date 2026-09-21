@@ -60,7 +60,7 @@ func TestPostWashes(t *testing.T) {
 		addCompany(t, database, testCompanyID, testCompanyName)
 		fleetWash := fmt.Sprintf(`{"id": "w2", "plate": "FLT001", "plan": "fleet", "company_id": %q, "admitted_at": "2026-09-21T07:31:00Z"}`, testCompanyID)
 
-		answer := decodeWashesAnswer(t, postWashes(t, NewRouter(store), token, "application/json", washBatchBody(testSiteID, premiumWashBody("w1"), fleetWash)))
+		answer := decodeWashesAnswer(t, postWashes(t, NewRouter(store, nil), token, "application/json", washBatchBody(testSiteID, premiumWashBody("w1"), fleetWash)))
 
 		if !slices.Equal(answer.Stored, []string{"w1", "w2"}) || len(answer.Duplicates) != 0 {
 			t.Fatalf("answer = %+v, want both stored", answer)
@@ -70,7 +70,7 @@ func TestPostWashes(t *testing.T) {
 	t.Run("the same body posted twice answers 200 both times and leaves one row per wash", func(t *testing.T) {
 		store, database := newTestStore(t)
 		token := provisionSite(t, store, testSiteID)
-		router := NewRouter(store)
+		router := NewRouter(store, nil)
 		body := washBatchBody(testSiteID, premiumWashBody("w1"), premiumWashBody("w2"))
 
 		first := decodeWashesAnswer(t, postWashes(t, router, token, "application/json", body))
@@ -91,7 +91,7 @@ func TestPostWashes(t *testing.T) {
 		store, _ := newTestStore(t)
 		token := provisionSite(t, store, testSiteID)
 
-		recorder := postWashes(t, NewRouter(store), token, "text/plain", washBatchBody(testSiteID, premiumWashBody("w1")))
+		recorder := postWashes(t, NewRouter(store, nil), token, "text/plain", washBatchBody(testSiteID, premiumWashBody("w1")))
 
 		if recorder.Code != http.StatusUnsupportedMediaType {
 			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnsupportedMediaType)
@@ -102,7 +102,7 @@ func TestPostWashes(t *testing.T) {
 		store, database := newTestStore(t)
 		provisionSite(t, store, testSiteID)
 
-		recorder := postWashes(t, NewRouter(store), "", "application/json", washBatchBody(testSiteID, premiumWashBody("w1")))
+		recorder := postWashes(t, NewRouter(store, nil), "", "application/json", washBatchBody(testSiteID, premiumWashBody("w1")))
 
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
@@ -117,7 +117,7 @@ func TestPostWashes(t *testing.T) {
 		provisionSite(t, store, "site-kista")
 		token := provisionSite(t, store, testSiteID)
 
-		recorder := postWashes(t, NewRouter(store), token, "application/json", washBatchBody("site-kista", premiumWashBody("w1")))
+		recorder := postWashes(t, NewRouter(store, nil), token, "application/json", washBatchBody("site-kista", premiumWashBody("w1")))
 
 		if recorder.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
@@ -132,7 +132,7 @@ func TestPostWashes(t *testing.T) {
 		token := provisionSite(t, store, testSiteID)
 		fleetWash := `{"id": "w1", "plate": "FLT001", "plan": "fleet", "company_id": "company-nowhere", "admitted_at": "2026-09-21T07:30:00Z"}`
 
-		recorder := postWashes(t, NewRouter(store), token, "application/json", washBatchBody(testSiteID, fleetWash))
+		recorder := postWashes(t, NewRouter(store, nil), token, "application/json", washBatchBody(testSiteID, fleetWash))
 
 		if recorder.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
@@ -159,7 +159,7 @@ func TestPostWashes(t *testing.T) {
 			store, _ := newTestStore(t)
 			token := provisionSite(t, store, testSiteID)
 
-			recorder := postWashes(t, NewRouter(store), token, "application/json", testCase.body)
+			recorder := postWashes(t, NewRouter(store, nil), token, "application/json", testCase.body)
 
 			if recorder.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want %d, body %q", recorder.Code, http.StatusBadRequest, recorder.Body.String())

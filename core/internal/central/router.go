@@ -3,13 +3,16 @@ package central
 
 import "net/http"
 
-// NewRouter returns the central API's HTTP handler over store.
-func NewRouter(store *Store) http.Handler {
+// NewRouter returns the central API's HTTP handler over store. A nil payments leaves the Stripe routes answering 503.
+func NewRouter(store *Store, payments *Payments) http.Handler {
 	ledger := &ledger{store: store}
+	billing := &billing{store: store, payments: payments}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.Handle("POST /washes", requireSite(store, ledger.handlePostWashes))
 	mux.Handle("GET /entitlements", requireSite(store, ledger.handleGetEntitlements))
+	mux.HandleFunc("POST /checkout", billing.handlePostCheckout)
+	mux.HandleFunc("POST /stripe/webhook", billing.handlePostStripeWebhook)
 	return mux
 }
 

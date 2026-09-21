@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/erclx/washgate/core/internal/central"
+	"github.com/erclx/washgate/core/internal/central/stripe"
 )
 
 const provisionTimeout = 10 * time.Second
@@ -39,10 +40,16 @@ func main() {
 		_ = store.Close()
 		os.Exit(1)
 	}
+	payments, err := paymentsFromEnv()
+	if err != nil {
+		slog.Error("central could not configure Stripe", "error", err)
+		_ = store.Close()
+		os.Exit(1)
+	}
 
 	server := &http.Server{
 		Addr:              address,
-		Handler:           central.NewRouter(store),
+		Handler:           central.NewRouter(store, payments),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	slog.Info("central listening", "address", address)
@@ -65,6 +72,28 @@ func provisionSites(store *central.Store, siteTokens []central.SiteToken) error 
 	}
 	slog.Info("sites provisioned", "site_ids", siteIDs)
 	return nil
+}
+
+// paymentsFromEnv builds the Stripe configuration, or returns nil when the key or webhook secret is unset,
+// so the stack still starts with no Stripe account.
+func paymentsFromEnv() (*central.Payments, error) {
+	secretKey := os.Getenv("STRIPE_SECRET_KEY")
+	webhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
+	if secretKey == "" || webhookSecret == "" {
+		slog.Info("stripe is off", "reason", "STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET is unset")
+		return nil, nil
+	}
+	client, err := stripe.NewClient(stripe.DefaultBaseURL, secretKey)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("stripe is on", "api_version", stripe.APIVersion)
+	return &central.Payments{
+		Client:        client,
+		WebhookSecret: webhookSecret,
+		SuccessURL:    envOr("CHECKOUT_SUCCESS_URL", "http://localhost:5173/"),
+		CancelURL:     envOr("CHECKOUT_CANCEL_URL", "http://localhost:5173/"),
+	}, nil
 }
 
 func envOr(name, fallback string) string {
