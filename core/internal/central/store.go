@@ -125,7 +125,8 @@ func (s *Store) Close() error {
 }
 
 // ProvisionSites registers each site and the hash of the token it now answers to, in one transaction.
-// A site central already holds keeps its name and sync time and takes the new hash.
+// A site central already holds keeps its name and sync time and takes the new hash, and a site left out
+// of tokens keeps its row but can no longer authenticate.
 func (s *Store) ProvisionSites(ctx context.Context, tokens []SiteToken) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -133,14 +134,13 @@ func (s *Store) ProvisionSites(ctx context.Context, tokens []SiteToken) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// The list is the whole set of sites that may authenticate. Clearing every hash first revokes a site left out,
+	// and keeps an upsert from landing on a stale row that still holds the same hash through the unique index.
+	if _, err := tx.ExecContext(ctx, "UPDATE sites SET token_sha256 = NULL"); err != nil {
+		return fmt.Errorf("revoke site tokens: %w", err)
+	}
 	for _, site := range tokens {
 		hash := hashSiteToken(site.Token)
-		// A dropped site keeps its row, so its stale hash is cleared first or the upsert below would land on that row.
-		if _, err := tx.ExecContext(ctx,
-			"UPDATE sites SET token_sha256 = NULL WHERE token_sha256 = ? AND id <> ?", hash[:], site.SiteID,
-		); err != nil {
-			return fmt.Errorf("release token for site %s: %w", site.SiteID, err)
-		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO sites (id, name, token_sha256) VALUES (?, ?, ?)
 			ON DUPLICATE KEY UPDATE token_sha256 = VALUES(token_sha256)`,

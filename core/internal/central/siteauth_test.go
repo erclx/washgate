@@ -40,6 +40,18 @@ func TestRequireSite(t *testing.T) {
 		}
 	})
 
+	t.Run("answers 401 to a site dropped from the list at the last provisioning", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		droppedToken := provisionSite(t, store, "site-kista")
+		provisionSite(t, store, testSiteID)
+
+		recorder := requestAsSite(t, requireSite(store, echoSite), "Bearer "+droppedToken)
+
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+		}
+	})
+
 	cases := []struct {
 		name          string
 		authorization string

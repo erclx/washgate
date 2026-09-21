@@ -43,7 +43,8 @@ func addSite(t *testing.T, database *testdb.Database, id string) {
 	}
 }
 
-// provisionSite registers siteID the way central's startup does and returns the token it now answers to.
+// provisionSite provisions siteID as the only site holding a token, the way central's startup does
+// with a one-entry list, and returns the token it now answers to.
 func provisionSite(t *testing.T, store *Store, siteID string) string {
 	t.Helper()
 	token := rand.Text() + rand.Text()
@@ -379,6 +380,41 @@ func TestProvisionSites(t *testing.T) {
 		}
 		if siteID, err := store.SiteForToken(t.Context(), hashSiteToken(token)); err != nil || siteID != testSiteID {
 			t.Fatalf("site for token = %q, error %v, want %q", siteID, err, testSiteID)
+		}
+	})
+
+	t.Run("a site left out of the list keeps its row and loses its token", func(t *testing.T) {
+		store, database := newTestStore(t)
+		droppedToken := provisionSite(t, store, "site-kista")
+
+		keptToken := provisionSite(t, store, testSiteID)
+
+		if _, err := store.SiteForToken(t.Context(), hashSiteToken(droppedToken)); !errors.Is(err, ErrUnknownToken) {
+			t.Fatalf("error for dropped site's token = %v, want ErrUnknownToken", err)
+		}
+		if siteID, err := store.SiteForToken(t.Context(), hashSiteToken(keptToken)); err != nil || siteID != testSiteID {
+			t.Fatalf("site for kept token = %q, error %v, want %q", siteID, err, testSiteID)
+		}
+		var sites int
+		if err := database.SQL.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sites").Scan(&sites); err != nil {
+			t.Fatalf("count sites: %v", err)
+		}
+		if sites != 2 {
+			t.Fatalf("sites = %d, want 2", sites)
+		}
+	})
+
+	t.Run("an empty list revokes every token", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		token := provisionSite(t, store, testSiteID)
+
+		err := store.ProvisionSites(t.Context(), nil)
+
+		if err != nil {
+			t.Fatalf("provision no sites: %v", err)
+		}
+		if _, err := store.SiteForToken(t.Context(), hashSiteToken(token)); !errors.Is(err, ErrUnknownToken) {
+			t.Fatalf("error = %v, want ErrUnknownToken", err)
 		}
 	})
 
